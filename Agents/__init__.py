@@ -1,2 +1,2 @@
-from Agents.developer_agent import call_developer
-from Agents.admin_agent import call_admin
+from agents.developer_agent import call_developer
+from agents.admin_agent import call_admin
