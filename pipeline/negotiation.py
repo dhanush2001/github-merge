@@ -1,7 +1,7 @@
 # pipeline/negotiation.py
 from models import Scenario, NegotiationTurn, NegotiationTrace, AdminDecision
-from agents.developer_agent import call_developer
-from agents.admin_agent import call_admin
+from Agents.developer_agent import call_developer
+from Agents.admin_agent import call_admin
 from pipeline.code_runner import run_unit_tests, compute_code_survival_rate
 from config import CFG
 import time

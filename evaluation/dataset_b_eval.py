@@ -2,8 +2,8 @@ import json, os
 from datetime import datetime
 from typing import List
 from models import Scenario, ScenarioResult, AdminDecision, DatasetType
-from agents.developer_agent import call_developer
-from agents.admin_agent import call_admin
+from Agents.developer_agent import call_developer
+from Agents.admin_agent import call_admin
 from pipeline.code_runner import run_unit_tests
 from evaluation.metrics import compute_admin_metrics, results_to_dataframe
 from config import CFG

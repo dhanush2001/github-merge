@@ -160,30 +160,21 @@ Outputs are written to `results/` (configured by `CFG.results_dir` in `config.py
 
 ## Troubleshooting
 
-### 1) Current snapshot has syntax blockers
+### 1) Quick health check
 
-A compile check currently reports `EOF while scanning triple-quoted string literal` in:
-
-- `pipeline/judge.py`
-- `Agents/admin_agent.py`
-- `Agents/developer_agent.py`
-
-These files must be restored/fixed before `run_eval.py` can execute.
-
-Quick check command:
+Run a compile check before first execution:
 
 ```bash
 python3 -m py_compile run_eval.py config.py models.py pipeline/*.py evaluation/*.py Agents/*.py
 ```
 
-### 2) Import path casing on Linux
+### 2) Missing Python packages
 
-Some modules import `agents.*` while the folder is named `Agents/`.
+If you see `ModuleNotFoundError` (for example `litellm`), ensure the active environment has dependencies installed:
 
-- On macOS (case-insensitive by default), this may still work.
-- On Linux (case-sensitive), this can raise `ModuleNotFoundError`.
-
-If needed, standardize casing (recommended: rename folder to `agents/` and update imports consistently).
+```bash
+pip install -r requirements.txt
+```
 
 ### 3) Missing datasets
 
