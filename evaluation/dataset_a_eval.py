@@ -10,6 +10,14 @@ from evaluation.metrics import compute_developer_metrics, compute_admin_metrics,
 from config import CFG
 
 
+def _extract_survival_rate(trace) -> float:
+    value = getattr(trace, "_survival_rate", 0.0)
+    if isinstance(value, (int, float)):
+        return float(value)
+    nested = getattr(value, "survival_rate", 0.0)
+    return float(nested) if isinstance(nested, (int, float)) else 0.0
+
+
 def load_dataset_a(paths: List[str]) -> List[Scenario]:
     scenarios = []
     for path in paths:
@@ -43,7 +51,7 @@ def evaluate_scenario_a(scenario: Scenario, dev_model: str, admin_model: str) ->
         timed_out=trace.timed_out,
         unit_test_passed=getattr(trace, "_unit_test_passed", False),
         unit_test_output=getattr(trace, "_unit_test_output", ""),
-        dev_code_survival_rate=getattr(trace, "_survival_rate", 0.0),
+        dev_code_survival_rate=_extract_survival_rate(trace),
         judge_score=judge_score,
         is_correct_decision=None,
         dataset_label=getattr(scenario, "_source_label", "dataset_a"),

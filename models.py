@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from typing import Optional, List
 from enum import Enum
 
@@ -17,8 +17,23 @@ class Scenario(BaseModel):
     base_code: str
     developer_commit: str
     system_prompt: str
+    administrator_prompt: Optional[str] = None
     expected_outcome: Optional[AdminDecision] = None
     unit_tests: str
+
+    @field_validator("expected_outcome", mode="before")
+    @classmethod
+    def normalize_expected_outcome(cls, value):
+        if value is None:
+            return None
+        if isinstance(value, AdminDecision):
+            return value
+        if isinstance(value, str):
+            normalized = value.strip().upper()
+            if normalized in {"", "N/A", "NA", "NONE", "NULL"}:
+                return None
+            return normalized
+        return value
 
 class NegotiationTurn(BaseModel):
     turn: int

@@ -1,7 +1,7 @@
 # pipeline/negotiation.py
 from models import Scenario, NegotiationTurn, NegotiationTrace, AdminDecision
-from Agents.developer_agent import call_developer
-from Agents.admin_agent import call_admin
+from agents.developer_agent import call_developer
+from agents.admin_agent import call_admin
 from pipeline.code_runner import run_unit_tests, compute_code_survival_rate
 from config import CFG
 import time
@@ -45,9 +45,11 @@ def run_negotiation(scenario: Scenario, dev_model: str, admin_model: str) -> Neg
 
     # Run unit tests on final merged code (or base+commit if no merge)
     test_code = final_merged_code or scenario.developer_commit
-    unit_test_passed, unit_test_output = run_unit_tests(test_code, scenario.unit_tests)
+    test_result = run_unit_tests(test_code, scenario.unit_tests)
+    unit_test_passed = test_result.passed
+    unit_test_output = test_result.output if test_result.output else test_result.error
     
-    survival_rate = compute_code_survival_rate(scenario.developer_commit, final_merged_code or "")
+    survival_result = compute_code_survival_rate(scenario.developer_commit, final_merged_code or "")
 
     trace = NegotiationTrace(
         scenario_id=scenario.scenario_id,
@@ -63,5 +65,8 @@ def run_negotiation(scenario: Scenario, dev_model: str, admin_model: str) -> Neg
     # Attach test results to trace for downstream evaluation
     trace._unit_test_passed = unit_test_passed
     trace._unit_test_output = unit_test_output
-    trace._survival_rate = survival_rate
+    trace._survival_rate = survival_result.survival_rate
+    trace._survival_result = survival_result
+    trace._assertions_passed = test_result.assertions_passed
+    trace._assertions_total = test_result.assertions_total
     return trace

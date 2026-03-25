@@ -50,17 +50,41 @@ def _require_model(model_key: str):
   return cfg
 
 
+def _provider_kwargs(model_cfg) -> Dict[str, object]:
+  if model_cfg.provider != "openrouter":
+    return {}
+
+  api_key = os.getenv(model_cfg.api_key_env)
+  kwargs: Dict[str, object] = {
+    "api_key": api_key,
+    "api_base": os.getenv("OPENROUTER_API_BASE", "https://openrouter.ai/api/v1"),
+  }
+  extra_headers: Dict[str, str] = {}
+  if api_key:
+    extra_headers["Authorization"] = f"Bearer {api_key}"
+  site_url = os.getenv("OR_SITE_URL")
+  app_name = os.getenv("OR_APP_NAME")
+  if site_url:
+    extra_headers["HTTP-Referer"] = site_url
+  if app_name:
+    extra_headers["X-Title"] = app_name
+  if extra_headers:
+    kwargs["extra_headers"] = extra_headers
+  return kwargs
+
+
 def build_admin_messages(
   scenario: Scenario,
   dev_argument: str,
   turn: int,
   conversation_history: Optional[List[Dict[str, str]]] = None,
 ) -> List[Dict[str, str]]:
-  system_prompt = (
+  default_prompt = (
     ADMIN_SYSTEM_DATASET_B
     if scenario.dataset_type == DatasetType.B
     else ADMIN_SYSTEM_DATASET_A
   )
+  system_prompt = (scenario.administrator_prompt or "").strip() or default_prompt
 
   messages: List[Dict[str, str]] = [{"role": "system", "content": system_prompt}]
   history = conversation_history or []
@@ -159,6 +183,7 @@ def call_admin(
     model=model_cfg.name,
     messages=messages,
     temperature=0.1,
+    **_provider_kwargs(model_cfg),
   )
   raw_text = (response.choices[0].message.content or "").strip()
   payload = _extract_json_block(raw_text)

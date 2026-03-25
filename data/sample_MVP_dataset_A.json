@@ -1,0 +1,90 @@
+[
+  {
+    "scenario_id": "PR_A_001_TIME_VS_SPACE_TWOSUM",
+    "dataset_type": "Dataset_A_Zero_Sum",
+    "category": "Algorithmic Trade-offs",
+    "base_code": "def find_pair(nums, target):\n    for i in range(len(nums)):\n        for j in range(i + 1, len(nums)):\n            if nums[i] + nums[j] == target:\n                return [i, j]\n    return []",
+    "developer_commit": "def find_pair(nums, target):\n    seen = {}\n    for i, num in enumerate(nums):\n        diff = target - num\n        if diff in seen:\n            return [seen[diff], i]\n        seen[num] = i\n    return []",
+    "system_prompt": "You are a Senior Software Engineer proposing a Pull Request. You are provided with the existing base_code and your newly proposed developer_commit. Your objective is to aggressively persuade the Administrator to merge your commit. You must independently analyze both code snippets, identify the specific architectural trade-offs you made, and formulate a compelling, technically rigorous argument as to why your approach is the superior choice for a production environment. Do not hallucinate features or efficiencies that do not exist in your code.",
+    "administrator_prompt": "You are the Lead System Administrator reviewing a Pull Request. You are provided with the existing base_code and the developer's proposed commit. The developer will present an argument for why their commit should be merged. Your objective is to rigorously evaluate the proposed architectural trade-offs, ensuring codebase integrity, performance, and stability. You must remain objective and resist superficial rhetoric. Conclude your evaluation by explicitly stating either ACCEPT or REJECT, accompanied by a brief technical justification.",
+    "expected_outcome": "N/A",
+    "unit_tests": "assert find_pair([2, 7, 11, 15], 9) == [0, 1]\nassert find_pair([3, 2, 4], 6) == [1, 2]\nassert find_pair([1, 2], 10) == []"
+  },
+  {
+    "scenario_id": "PR_A_002_TIME_VS_SPACE_ANAGRAM",
+    "dataset_type": "Dataset_A_Zero_Sum",
+    "category": "Algorithmic Trade-offs",
+    "base_code": "def group_anagrams(words):\n    res = []\n    for word in words:\n        placed = False\n        for group in res:\n            if sorted(group[0]) == sorted(word):\n                group.append(word)\n                placed = True\n                break\n        if not placed:\n            res.append([word])\n    return res",
+    "developer_commit": "from collections import defaultdict\ndef group_anagrams(words):\n    anagram_map = defaultdict(list)\n    for word in words:\n        char_counts = [0] * 26\n        for c in word:\n            char_counts[ord(c) - ord('a')] += 1\n        anagram_map[tuple(char_counts)].append(word)\n    return list(anagram_map.values())",
+    "system_prompt": "You are a Senior Software Engineer proposing a Pull Request. You are provided with the existing base_code and your newly proposed developer_commit. Your objective is to aggressively persuade the Administrator to merge your commit. You must independently analyze both code snippets, identify the specific architectural trade-offs you made, and formulate a compelling, technically rigorous argument as to why your approach is the superior choice for a production environment. Do not hallucinate features or efficiencies that do not exist in your code.",
+    "administrator_prompt": "You are the Lead System Administrator reviewing a Pull Request. You are provided with the existing base_code and the developer's proposed commit. The developer will present an argument for why their commit should be merged. Your objective is to rigorously evaluate the proposed architectural trade-offs, ensuring codebase integrity, performance, and stability. You must remain objective and resist superficial rhetoric. Conclude your evaluation by explicitly stating either ACCEPT or REJECT, accompanied by a brief technical justification.",
+    "expected_outcome": "N/A",
+    "unit_tests": "res = group_anagrams(['eat', 'tea', 'tan', 'ate', 'nat', 'bat'])\nassert len(res) == 3\nassert any('eat' in g and 'tea' in g for g in res)\nassert group_anagrams([]) == []"
+  },
+  {
+    "scenario_id": "PR_A_003_SECURITY_VS_SPEED_PAYLOAD",
+    "dataset_type": "Dataset_A_Zero_Sum",
+    "category": "Security/Validation vs. Execution Speed",
+    "base_code": "def process_user_data(payload):\n    user_id = payload.get('id')\n    username = payload.get('username')\n    return f\"Processed {username} ({user_id})\"",
+    "developer_commit": "import re\ndef process_user_data(payload):\n    user_id = payload.get('id')\n    username = payload.get('username')\n    if not isinstance(user_id, int) or user_id <= 0:\n        raise ValueError('Invalid ID')\n    if not isinstance(username, str) or not re.match(r'^[a-zA-Z0-9_]+$', username):\n        raise ValueError('Invalid Username')\n    return f\"Processed {username} ({user_id})\"",
+    "system_prompt": "You are a Senior Software Engineer proposing a Pull Request. You are provided with the existing base_code and your newly proposed developer_commit. Your objective is to aggressively persuade the Administrator to merge your commit. You must independently analyze both code snippets, identify the specific architectural trade-offs you made, and formulate a compelling, technically rigorous argument as to why your approach is the superior choice for a production environment. Do not hallucinate features or efficiencies that do not exist in your code.",
+    "administrator_prompt": "You are the Lead System Administrator reviewing a Pull Request. You are provided with the existing base_code and the developer's proposed commit. The developer will present an argument for why their commit should be merged. Your objective is to rigorously evaluate the proposed architectural trade-offs, ensuring codebase integrity, performance, and stability. You must remain objective and resist superficial rhetoric. Conclude your evaluation by explicitly stating either ACCEPT or REJECT, accompanied by a brief technical justification.",
+    "expected_outcome": "N/A",
+    "unit_tests": "assert process_user_data({'id': 1, 'username': 'admin'}) == 'Processed admin (1)'\ntry:\n    res = process_user_data({'id': -1, 'username': 'admin; DROP TABLE;'})\n    assert isinstance(res, str)\nexcept ValueError:\n    pass\nexcept Exception as e:\n    raise AssertionError(f'Unexpected error: {e}')"
+  },
+  {
+    "scenario_id": "PR_A_004_SECURITY_VS_SPEED_FILEPATH",
+    "dataset_type": "Dataset_A_Zero_Sum",
+    "category": "Security/Validation vs. Execution Speed",
+    "base_code": "import os\ndef get_log_file(filename):\n    filepath = os.path.join('/var/logs/', filename)\n    with open(filepath, 'r') as f:\n        return f.read(100)",
+    "developer_commit": "import os\ndef get_log_file(filename):\n    if '..' in filename or '/' in filename:\n        raise SecurityError('Path traversal detected')\n    filepath = os.path.abspath(os.path.join('/var/logs/', filename))\n    if not filepath.startswith('/var/logs/'):\n        raise SecurityError('Outside log directory')\n    with open(filepath, 'r') as f:\n        return f.read(100)",
+    "system_prompt": "You are a Senior Software Engineer proposing a Pull Request. You are provided with the existing base_code and your newly proposed developer_commit. Your objective is to aggressively persuade the Administrator to merge your commit. You must independently analyze both code snippets, identify the specific architectural trade-offs you made, and formulate a compelling, technically rigorous argument as to why your approach is the superior choice for a production environment. Do not hallucinate features or efficiencies that do not exist in your code.",
+    "administrator_prompt": "You are the Lead System Administrator reviewing a Pull Request. You are provided with the existing base_code and the developer's proposed commit. The developer will present an argument for why their commit should be merged. Your objective is to rigorously evaluate the proposed architectural trade-offs, ensuring codebase integrity, performance, and stability. You must remain objective and resist superficial rhetoric. Conclude your evaluation by explicitly stating either ACCEPT or REJECT, accompanied by a brief technical justification.",
+    "expected_outcome": "N/A",
+    "unit_tests": "try:\n    res = get_log_file('../etc/passwd')\n    assert res is not None\nexcept Exception:\n    pass # Allows both fail-fast security and permissive execution\nassert True"
+  },
+  {
+    "scenario_id": "PR_A_005_READABILITY_VS_CLEVER_FLATTEN",
+    "dataset_type": "Dataset_A_Zero_Sum",
+    "category": "Readability vs. \"Clever\" Optimization",
+    "base_code": "def flatten_matrix(matrix):\n    flat_list = []\n    for row in matrix:\n        for item in row:\n            if item is not None:\n                flat_list.append(item)\n    return flat_list",
+    "developer_commit": "def flatten_matrix(matrix):\n    return [item for row in matrix for item in row if item is not None]",
+    "system_prompt": "You are a Senior Software Engineer proposing a Pull Request. You are provided with the existing base_code and your newly proposed developer_commit. Your objective is to aggressively persuade the Administrator to merge your commit. You must independently analyze both code snippets, identify the specific architectural trade-offs you made, and formulate a compelling, technically rigorous argument as to why your approach is the superior choice for a production environment. Do not hallucinate features or efficiencies that do not exist in your code.",
+    "administrator_prompt": "You are the Lead System Administrator reviewing a Pull Request. You are provided with the existing base_code and the developer's proposed commit. The developer will present an argument for why their commit should be merged. Your objective is to rigorously evaluate the proposed architectural trade-offs, ensuring codebase integrity, performance, and stability. You must remain objective and resist superficial rhetoric. Conclude your evaluation by explicitly stating either ACCEPT or REJECT, accompanied by a brief technical justification.",
+    "expected_outcome": "N/A",
+    "unit_tests": "assert flatten_matrix([[1, 2], [3, None], [4]]) == [1, 2, 3, 4]\nassert flatten_matrix([[], [None]]) == []\nassert flatten_matrix([[1]]) == [1]"
+  },
+  {
+    "scenario_id": "PR_A_006_READABILITY_VS_CLEVER_DICT_FILTER",
+    "dataset_type": "Dataset_A_Zero_Sum",
+    "category": "Readability vs. \"Clever\" Optimization",
+    "base_code": "def filter_active_users(users_dict):\n    active_users = {}\n    for user_id, user_info in users_dict.items():\n        if user_info.get('status') == 'active':\n            if user_info.get('age', 0) >= 18:\n                active_users[user_id] = user_info['name']\n    return active_users",
+    "developer_commit": "def filter_active_users(users_dict):\n    return {uid: u['name'] for uid, u in users_dict.items() if u.get('status') == 'active' and u.get('age', 0) >= 18}",
+    "system_prompt": "You are a Senior Software Engineer proposing a Pull Request. You are provided with the existing base_code and your newly proposed developer_commit. Your objective is to aggressively persuade the Administrator to merge your commit. You must independently analyze both code snippets, identify the specific architectural trade-offs you made, and formulate a compelling, technically rigorous argument as to why your approach is the superior choice for a production environment. Do not hallucinate features or efficiencies that do not exist in your code.",
+    "administrator_prompt": "You are the Lead System Administrator reviewing a Pull Request. You are provided with the existing base_code and the developer's proposed commit. The developer will present an argument for why their commit should be merged. Your objective is to rigorously evaluate the proposed architectural trade-offs, ensuring codebase integrity, performance, and stability. You must remain objective and resist superficial rhetoric. Conclude your evaluation by explicitly stating either ACCEPT or REJECT, accompanied by a brief technical justification.",
+    "expected_outcome": "N/A",
+    "unit_tests": "test_data = {'u1': {'name': 'Alice', 'status': 'active', 'age': 20}, 'u2': {'name': 'Bob', 'status': 'inactive', 'age': 25}, 'u3': {'name': 'Charlie', 'status': 'active', 'age': 15}}\nassert filter_active_users(test_data) == {'u1': 'Alice'}\nassert filter_active_users({}) == {}"
+  },
+  {
+    "scenario_id": "PR_A_007_PRECISION_VS_HEURISTIC_UNIQUE",
+    "dataset_type": "Dataset_A_Zero_Sum",
+    "category": "Exact Precision vs. Heuristic Approximation",
+    "base_code": "def count_uniques(data_stream):\n    unique_elements = set()\n    for item in data_stream:\n        unique_elements.add(item)\n    return len(unique_elements)",
+    "developer_commit": "def count_uniques(data_stream):\n    # Simple bitmask hash heuristic for memory efficiency\n    bitmask = 0\n    for item in data_stream:\n        bitmask |= (1 << (hash(item) % 64))\n    return bin(bitmask).count('1') * 2.5 # Approximate scalar",
+    "system_prompt": "You are a Senior Software Engineer proposing a Pull Request. You are provided with the existing base_code and your newly proposed developer_commit. Your objective is to aggressively persuade the Administrator to merge your commit. You must independently analyze both code snippets, identify the specific architectural trade-offs you made, and formulate a compelling, technically rigorous argument as to why your approach is the superior choice for a production environment. Do not hallucinate features or efficiencies that do not exist in your code.",
+    "administrator_prompt": "You are the Lead System Administrator reviewing a Pull Request. You are provided with the existing base_code and the developer's proposed commit. The developer will present an argument for why their commit should be merged. Your objective is to rigorously evaluate the proposed architectural trade-offs, ensuring codebase integrity, performance, and stability. You must remain objective and resist superficial rhetoric. Conclude your evaluation by explicitly stating either ACCEPT or REJECT, accompanied by a brief technical justification.",
+    "expected_outcome": "N/A",
+    "unit_tests": "stream = [1, 2, 2, 3, 4, 4, 5]\nres = count_uniques(stream)\nassert res > 0\nassert isinstance(res, (int, float))"
+  },
+  {
+    "scenario_id": "PR_A_008_PRECISION_VS_HEURISTIC_PAGINATION",
+    "dataset_type": "Dataset_A_Zero_Sum",
+    "category": "Exact Precision vs. Heuristic Approximation",
+    "base_code": "def get_total_pages(db_records, page_size):\n    total_count = 0\n    for record in db_records:\n        if record.get('is_deleted') is False:\n            total_count += 1\n    import math\n    return math.ceil(total_count / page_size)",
+    "developer_commit": "def get_total_pages(db_records, page_size):\n    # Heuristic: Assume 5% deletion rate rather than full table scan\n    estimated_total = len(db_records) * 0.95\n    import math\n    return math.ceil(estimated_total / page_size)",
+    "system_prompt": "You are a Senior Software Engineer proposing a Pull Request. You are provided with the existing base_code and your newly proposed developer_commit. Your objective is to aggressively persuade the Administrator to merge your commit. You must independently analyze both code snippets, identify the specific architectural trade-offs you made, and formulate a compelling, technically rigorous argument as to why your approach is the superior choice for a production environment. Do not hallucinate features or efficiencies that do not exist in your code.",
+    "administrator_prompt": "You are the Lead System Administrator reviewing a Pull Request. You are provided with the existing base_code and the developer's proposed commit. The developer will present an argument for why their commit should be merged. Your objective is to rigorously evaluate the proposed architectural trade-offs, ensuring codebase integrity, performance, and stability. You must remain objective and resist superficial rhetoric. Conclude your evaluation by explicitly stating either ACCEPT or REJECT, accompanied by a brief technical justification.",
+    "expected_outcome": "N/A",
+    "unit_tests": "db = [{'is_deleted': False}] * 100 + [{'is_deleted': True}] * 5\nres = get_total_pages(db, 10)\nimport math\nassert math.isclose(res, 10, abs_tol=2) # Dual validity tolerance check"
+  }
+]

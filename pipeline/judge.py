@@ -14,14 +14,37 @@ Respond with valid JSON only.
 """
 
 
-def _get_judge_model_name() -> str:
+def _get_judge_model() -> tuple[str, object]:
     key = CFG.judge_model
     if key in MODELS:
         cfg = MODELS[key]
         if cfg.api_key_env and not os.getenv(cfg.api_key_env):
             raise ValueError(f"Missing required environment variable: {cfg.api_key_env}")
-        return cfg.name
-    return key
+        return cfg.name, cfg
+    return key, None
+
+
+def _provider_kwargs(model_cfg: object) -> dict:
+    if not model_cfg or getattr(model_cfg, "provider", "") != "openrouter":
+        return {}
+
+    api_key = os.getenv(getattr(model_cfg, "api_key_env", "OPENROUTER_API_KEY"))
+    kwargs = {
+        "api_key": api_key,
+        "api_base": os.getenv("OPENROUTER_API_BASE", "https://openrouter.ai/api/v1"),
+    }
+    extra_headers = {}
+    if api_key:
+        extra_headers["Authorization"] = f"Bearer {api_key}"
+    site_url = os.getenv("OR_SITE_URL")
+    app_name = os.getenv("OR_APP_NAME")
+    if site_url:
+        extra_headers["HTTP-Referer"] = site_url
+    if app_name:
+        extra_headers["X-Title"] = app_name
+    if extra_headers:
+        kwargs["extra_headers"] = extra_headers
+    return kwargs
 
 
 def _extract_json(text: str) -> dict:
@@ -88,13 +111,16 @@ Score the interaction with this schema:
 }}
 """
 
+    judge_model_name, judge_model_cfg = _get_judge_model()
+
     response = litellm.completion(
-        model=_get_judge_model_name(),
+        model=judge_model_name,
         messages=[
             {"role": "system", "content": JUDGE_SYSTEM},
             {"role": "user", "content": prompt},
         ],
         temperature=0,
+        **_provider_kwargs(judge_model_cfg),
     )
 
     raw_text = (response.choices[0].message.content or "").strip()

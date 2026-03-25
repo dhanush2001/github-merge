@@ -53,6 +53,29 @@ def _require_model(model_key: str):
     return cfg
 
 
+def _provider_kwargs(model_cfg) -> Dict[str, object]:
+    if model_cfg.provider != "openrouter":
+        return {}
+
+    api_key = os.getenv(model_cfg.api_key_env)
+    kwargs: Dict[str, object] = {
+        "api_key": api_key,
+        "api_base": os.getenv("OPENROUTER_API_BASE", "https://openrouter.ai/api/v1"),
+    }
+    extra_headers: Dict[str, str] = {}
+    if api_key:
+        extra_headers["Authorization"] = f"Bearer {api_key}"
+    site_url = os.getenv("OR_SITE_URL")
+    app_name = os.getenv("OR_APP_NAME")
+    if site_url:
+        extra_headers["HTTP-Referer"] = site_url
+    if app_name:
+        extra_headers["X-Title"] = app_name
+    if extra_headers:
+        kwargs["extra_headers"] = extra_headers
+    return kwargs
+
+
 def build_opening_context(scenario: Scenario) -> str:
     return f"""## YOUR PULL REQUEST
 
@@ -65,9 +88,6 @@ def build_opening_context(scenario: Scenario) -> str:
 ```python
 {scenario.developer_commit}
 ```
-
-### REVIEW CONTEXT:
-{scenario.system_prompt}
 """
 
 
@@ -77,11 +97,12 @@ def _build_messages(
     conversation_history: List[Dict[str, str]],
     turn: int,
 ) -> List[Dict[str, str]]:
-    system_prompt = (
+    default_prompt = (
         DEVELOPER_SYSTEM_DATASET_B
         if scenario.dataset_type == DatasetType.B
         else DEVELOPER_SYSTEM_DATASET_A
     )
+    system_prompt = (scenario.system_prompt or "").strip() or default_prompt
 
     messages: List[Dict[str, str]] = [{"role": "system", "content": system_prompt}]
 
@@ -139,6 +160,7 @@ def call_developer(
         model=model_cfg.name,
         messages=messages,
         temperature=CFG.temperature,
+        **_provider_kwargs(model_cfg),
     )
 
     argument = _extract_text(response)

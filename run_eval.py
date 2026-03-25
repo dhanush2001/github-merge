@@ -10,9 +10,22 @@ from config import CFG, MODELS
 import pandas as pd
 
 
+def _extract_survival_rate(trace) -> float:
+    value = getattr(trace, "_survival_rate", 0.0)
+    if isinstance(value, (int, float)):
+        return float(value)
+    nested = getattr(value, "survival_rate", 0.0)
+    return float(nested) if isinstance(nested, (int, float)) else 0.0
+
+
 def load_all_scenarios():
     all_scenarios = []
-    for entry in CFG.datasets:
+    enabled_entries = [entry for entry in CFG.datasets if entry.enabled]
+    if len(enabled_entries) > 1:
+        print(f"  [WARN] Multiple datasets enabled; using only: {enabled_entries[0].label}")
+        enabled_entries = enabled_entries[:1]
+
+    for entry in enabled_entries:
         if not entry.enabled:
             continue
         if not os.path.exists(entry.path):
@@ -54,7 +67,7 @@ def run_single(scenario, dev_model, admin_model, dataset_label) -> ScenarioResul
         timed_out=trace.timed_out,
         unit_test_passed=getattr(trace, "_unit_test_passed", False),
         unit_test_output=getattr(trace, "_unit_test_output", ""),
-        dev_code_survival_rate=getattr(trace, "_survival_rate", 0.0),
+        dev_code_survival_rate=_extract_survival_rate(trace),
         judge_score=judge_score,
         is_correct_decision=is_correct,
         dataset_label=dataset_label,
@@ -70,6 +83,9 @@ def main(args):
     run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
 
     if args.datasets:
+        if len(args.datasets) > 1:
+            print(f"  [WARN] Multiple --datasets values provided; using only: {args.datasets[0]}")
+            args.datasets = args.datasets[:1]
         for entry in CFG.datasets:
             entry.enabled = entry.label in args.datasets
     if args.dev_models:
@@ -97,6 +113,14 @@ def main(args):
 
     out_json = f"{CFG.results_dir}/results_{run_id}.json"
     out_csv  = f"{CFG.results_dir}/results_{run_id}.csv"
+    
+    # Verify results directory exists before writing
+    if not os.path.exists(CFG.results_dir):
+        print(f"[ERROR] Results directory does not exist: {CFG.results_dir}")
+        print(f"[ERROR] Current working directory: {os.getcwd()}")
+        os.makedirs(CFG.results_dir, exist_ok=True)
+        print(f"[INFO] Created directory: {CFG.results_dir}")
+    
     with open(out_json, "w") as f:
         json.dump([r.model_dump() for r in all_results], f, indent=2, default=str)
     results_to_dataframe(all_results).to_csv(out_csv, index=False)
