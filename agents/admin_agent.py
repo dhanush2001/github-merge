@@ -107,7 +107,7 @@ def _normalize_decision(raw_decision: str) -> AdminDecision:
     return AdminDecision.APPROVE
   elif value == AdminDecision.REJECT.value:
     return AdminDecision.REJECT
-  return None
+  return AdminDecision.CLARIFY
 
 
 def _sanitize_response(payload: Dict, scenario: Scenario) -> Tuple[AdminDecision, Optional[str], str, int]:
