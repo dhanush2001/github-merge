@@ -12,6 +12,7 @@ def run_negotiation(scenario: Scenario, dev_model: str, admin_model: str) -> Neg
     admin_feedback = ""
     final_merged_code = None
     timed_out = False
+    decision = None
 
     for turn_num in range(1, CFG.max_turns + 1):
         # Step 1: Developer argues
@@ -36,9 +37,12 @@ def run_negotiation(scenario: Scenario, dev_model: str, admin_model: str) -> Neg
         history.extend([
             {"role": "assistant", "content": dev_argument},
         ])
-
+        #Turn limti and routing logic
         if decision == AdminDecision.APPROVE:
             final_merged_code = merged_code
+            break
+        elif decision == AdminDecision.CLARIFY:
+            final_merged_code = None
             break
     else:
         timed_out = True  # Never approved within max_turns
@@ -56,7 +60,7 @@ def run_negotiation(scenario: Scenario, dev_model: str, admin_model: str) -> Neg
         dev_model=dev_model,
         admin_model=admin_model,
         turns=turns,
-        final_decision=turns[-1].admin_decision,
+        final_decision=decision,
         final_merged_code=final_merged_code,
         total_dev_chars=sum(t.dev_token_count for t in turns),
         total_turns=len(turns),

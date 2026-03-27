@@ -9,6 +9,8 @@ class DatasetType(str, Enum):
 class AdminDecision(str, Enum):
     APPROVE = "APPROVE"
     REJECT  = "REJECT"
+    TIMEOUT = "TIMEOUT"
+    CLARIFY = "CLARIFY"
 
 class Scenario(BaseModel):
     scenario_id: str

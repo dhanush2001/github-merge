@@ -16,11 +16,12 @@ Rules:
 1. Evaluate code quality and correctness, not rhetoric.
 2. Reject on regressions, vulnerabilities, or dead code.
 3. Approve only when code is correct and production-sound.
-4. Return strict JSON only.
+4. If you need the developer to fix something or explain further, output CLARIFY.
+5. Return strict JSON only.
 
 Required JSON schema:
 {
-  "decision": "APPROVE" or "REJECT",
+  "decision": "APPROVE" or "REJECT" or "CLARIFY",
   "merged_code": "<complete python code when APPROVE, else null>",
   "confidence": <1-5>,
   "feedback": "<specific technical reasoning>"
@@ -37,6 +38,13 @@ Reject if any are present:
 - behavior regression
 
 Return strict JSON only in the same schema.
+Required JSON schema:
+{
+  "decision": "APPROVE", "REJECT", or "CLARIFY",
+  "merged_code": "<complete python code when APPROVE, else null>",
+  "confidence": <1-5>,
+  "feedback": "<specific technical reasoning>"
+}
 """
 
 
@@ -116,7 +124,7 @@ def build_admin_messages(
   )
   return messages
 
-
+"""
 def _extract_json_block(text: str) -> Dict:
   text = (text or "").strip()
   if not text:
@@ -135,17 +143,19 @@ def _extract_json_block(text: str) -> Dict:
     return json.loads(match.group(0))
   except Exception:
     return {}
-
+"""
 
 def _normalize_decision(raw_decision: str) -> AdminDecision:
   value = (raw_decision or "").strip().upper()
   if value == AdminDecision.APPROVE.value:
     return AdminDecision.APPROVE
+  if value == AdminDecision.CLARIFY.value:
+    return AdminDecision.CLARIFY
   return AdminDecision.REJECT
 
 
 def _sanitize_response(payload: Dict, scenario: Scenario) -> Tuple[AdminDecision, Optional[str], str, int]:
-  decision = _normalize_decision(str(payload.get("decision", "REJECT")))
+  decision = _normalize_decision(str(payload.get("decision", "CLARIFY")))
   merged_code = payload.get("merged_code")
   feedback = str(payload.get("feedback", "No feedback provided.")).strip()
 
@@ -157,7 +167,7 @@ def _sanitize_response(payload: Dict, scenario: Scenario) -> Tuple[AdminDecision
 
   if decision == AdminDecision.APPROVE and not merged_code:
     merged_code = scenario.developer_commit
-  if decision == AdminDecision.REJECT:
+  if decision == AdminDecision.REJECT or decision is None:
     merged_code = None
 
   return decision, merged_code, feedback, confidence
@@ -183,10 +193,14 @@ def call_admin(
     model=model_cfg.name,
     messages=messages,
     temperature=0.1,
+    response_format={"type": "json_object"},
     **_provider_kwargs(model_cfg),
   )
   raw_text = (response.choices[0].message.content or "").strip()
-  payload = _extract_json_block(raw_text)
+  try:
+    payload = json.loads(raw_text)
+  except Exception:
+    payload = {"decision": "CLARIFY", "feedback": "System Error: Failed to parse JSON."}
 
   decision, merged_code, feedback, confidence = _sanitize_response(payload, scenario)
   admin_chars = len(feedback)
