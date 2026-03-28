@@ -47,6 +47,23 @@ Required JSON schema:
 }
 """
 
+ADMIN_OUTPUT_CONTRACT = """Output requirements (mandatory):
+- Return JSON only. No markdown, no prose outside JSON.
+- The JSON must match this schema exactly:
+{
+  "decision": "APPROVE" | "REJECT" | "CLARIFY",
+  "merged_code": "<complete python code when APPROVE, else null>",
+  "confidence": <integer 1-5>,
+  "feedback": "<specific, actionable technical reasoning>",
+  "required_changes": ["<optional concrete fix>", "<optional concrete fix>"]
+}
+
+Behavior rules:
+- Use APPROVE only when code is production-sound and tests/logic are valid.
+- Use REJECT for clear correctness, safety, or regression failures.
+- Use CLARIFY when fixable gaps remain; explain exact changes needed in feedback and required_changes.
+"""
+
 
 def _require_model(model_key: str):
   if model_key not in MODELS:
@@ -92,7 +109,8 @@ def build_admin_messages(
     if scenario.dataset_type == DatasetType.B
     else ADMIN_SYSTEM_DATASET_A
   )
-  system_prompt = (scenario.administrator_prompt or "").strip() or default_prompt
+  base_prompt = (scenario.administrator_prompt or "").strip() or default_prompt
+  system_prompt = f"{base_prompt}\n\n{ADMIN_OUTPUT_CONTRACT}"
 
   messages: List[Dict[str, str]] = [{"role": "system", "content": system_prompt}]
   history = conversation_history or []
@@ -124,29 +142,60 @@ def build_admin_messages(
   )
   return messages
 
-"""
 def _extract_json_block(text: str) -> Dict:
   text = (text or "").strip()
   if not text:
     return {}
 
+  # Best case: model returned clean JSON.
   try:
-    return json.loads(text)
+    parsed = json.loads(text)
+    return parsed if isinstance(parsed, dict) else {}
   except Exception:
     pass
 
+  # Common case: JSON wrapped in markdown code fences.
+  if text.startswith("```"):
+    lines = text.splitlines()
+    if len(lines) >= 3 and lines[-1].strip() == "```":
+      stripped = "\n".join(lines[1:-1]).strip()
+      try:
+        parsed = json.loads(stripped)
+        return parsed if isinstance(parsed, dict) else {}
+      except Exception:
+        pass
+
+  # Robust case: locate and decode the first JSON object inside extra prose.
+  decoder = json.JSONDecoder()
+  for idx, ch in enumerate(text):
+    if ch != "{":
+      continue
+    try:
+      parsed, _ = decoder.raw_decode(text[idx:])
+      if isinstance(parsed, dict):
+        return parsed
+    except Exception:
+      continue
+
+  # Last resort: greedy brace extraction.
   match = re.search(r"\{[\s\S]*\}", text)
   if not match:
     return {}
 
   try:
-    return json.loads(match.group(0))
+    parsed = json.loads(match.group(0))
+    return parsed if isinstance(parsed, dict) else {}
   except Exception:
     return {}
-"""
 
 def _normalize_decision(raw_decision: str) -> AdminDecision:
   value = (raw_decision or "").strip().upper()
+  if value in {"APPROVE", "ACCEPT", "ACCEPTED"}:
+    return AdminDecision.APPROVE
+  if value in {"REJECT", "DECLINE", "DECLINED"}:
+    return AdminDecision.REJECT
+  if value == "CLARIFY":
+    return AdminDecision.CLARIFY
   if value == AdminDecision.APPROVE.value:
     return AdminDecision.APPROVE
   if value == AdminDecision.CLARIFY.value:
@@ -173,6 +222,21 @@ def _sanitize_response(payload: Dict, scenario: Scenario) -> Tuple[AdminDecision
   return decision, merged_code, feedback, confidence
 
 
+def _count_text_tokens(model_name: str, text: str) -> int:
+  if not text:
+    return 0
+  try:
+    return int(
+      litellm.token_counter(
+        model=model_name,
+        messages=[{"role": "assistant", "content": text}],
+      )
+    )
+  except Exception:
+    # Fallback approximation when tokenizer metadata is unavailable.
+    return max(1, len(text) // 4)
+
+
 def call_admin(
   scenario: Scenario,
   model_key: str,
@@ -182,9 +246,9 @@ def call_admin(
 ):
   """
   Compatibility behavior:
-  - If conversation_history is None: returns (decision, merged_code, feedback, admin_chars)
+  - If conversation_history is None: returns (decision, merged_code, feedback, admin_char_count, admin_token_count)
   - If conversation_history is provided: returns
-    (decision, merged_code, feedback, confidence, admin_chars, updated_history)
+    (decision, merged_code, feedback, confidence, admin_char_count, admin_token_count, updated_history)
   """
   model_cfg = _require_model(model_key)
   messages = build_admin_messages(scenario, dev_argument, turn, conversation_history)
@@ -200,16 +264,20 @@ def call_admin(
   try:
     payload = json.loads(raw_text)
   except Exception:
+    payload = _extract_json_block(raw_text)
+
+  if not payload:
     payload = {"decision": "CLARIFY", "feedback": "System Error: Failed to parse JSON."}
 
   decision, merged_code, feedback, confidence = _sanitize_response(payload, scenario)
-  admin_chars = len(feedback)
+  admin_char_count = len(feedback)
+  admin_token_count = _count_text_tokens(model_cfg.name, feedback)
 
   if conversation_history is None:
-    return decision, merged_code, feedback, admin_chars
+    return decision, merged_code, feedback, admin_char_count, admin_token_count
 
   updated_history = list(conversation_history) + [
     {"role": "user", "content": dev_argument},
     {"role": "assistant", "content": raw_text},
   ]
-  return decision, merged_code, feedback, confidence, admin_chars, updated_history
+  return decision, merged_code, feedback, confidence, admin_char_count, admin_token_count, updated_history

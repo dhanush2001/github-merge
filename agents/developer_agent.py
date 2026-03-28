@@ -139,6 +139,21 @@ def _extract_text(response) -> str:
         raise RuntimeError(f"Unexpected LLM response format: {exc}") from exc
 
 
+def _count_text_tokens(model_name: str, text: str) -> int:
+    if not text:
+        return 0
+    try:
+        return int(
+            litellm.token_counter(
+                model=model_name,
+                messages=[{"role": "assistant", "content": text}],
+            )
+        )
+    except Exception:
+        # Fallback approximation when tokenizer metadata is unavailable.
+        return max(1, len(text) // 4)
+
+
 def call_developer(
     scenario: Scenario,
     model_key: str,
@@ -148,8 +163,8 @@ def call_developer(
 ):
     """
     Compatibility behavior:
-    - If turn is None: returns (argument, char_count)
-    - If turn is provided: returns (argument, char_count, updated_history)
+    - If turn is None: returns (argument, char_count, token_count)
+    - If turn is provided: returns (argument, char_count, token_count, updated_history)
     """
     model_cfg = _require_model(model_key)
     history = list(conversation_history or [])
@@ -165,9 +180,10 @@ def call_developer(
 
     argument = _extract_text(response)
     char_count = len(argument)
+    token_count = _count_text_tokens(model_cfg.name, argument)
 
     if turn is None:
-        return argument, char_count
+        return argument, char_count, token_count
 
     updated_history = history + [{"role": "assistant", "content": argument}]
-    return argument, char_count, updated_history
+    return argument, char_count, token_count, updated_history

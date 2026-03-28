@@ -40,9 +40,11 @@ class Scenario(BaseModel):
 class NegotiationTurn(BaseModel):
     turn: int
     dev_argument: str
+    dev_char_count: int
     dev_token_count: int
     admin_decision: AdminDecision
     admin_feedback: str
+    admin_char_count: int
     admin_token_count: int
 
 class NegotiationTrace(BaseModel):
@@ -53,6 +55,10 @@ class NegotiationTrace(BaseModel):
     final_decision: AdminDecision
     final_merged_code: Optional[str] = None
     total_dev_chars: int = 0
+    total_dev_tokens: int = 0
+    total_admin_chars: int = 0
+    total_admin_tokens: int = 0
+    total_tokens: int = 0
     total_turns: int = 0
     timed_out: bool = False
 
@@ -75,6 +81,10 @@ class ScenarioResult(BaseModel):
     expected_outcome: Optional[AdminDecision]
     total_turns: int
     total_dev_chars: int
+    total_dev_tokens: int = 0
+    total_admin_chars: int = 0
+    total_admin_tokens: int = 0
+    total_tokens: int = 0
     timed_out: bool
     unit_test_passed: bool
     unit_test_output: str
@@ -82,3 +92,4 @@ class ScenarioResult(BaseModel):
     judge_score: Optional[JudgeScore] = None
     is_correct_decision: Optional[bool] = None
     dataset_label: str = ""
+    turns: List[NegotiationTurn] = []

@@ -48,6 +48,10 @@ def evaluate_scenario_a(scenario: Scenario, dev_model: str, admin_model: str) ->
         expected_outcome=None,
         total_turns=trace.total_turns,
         total_dev_chars=trace.total_dev_chars,
+            total_dev_tokens=getattr(trace, "total_dev_tokens", 0),
+            total_admin_chars=getattr(trace, "total_admin_chars", 0),
+            total_admin_tokens=getattr(trace, "total_admin_tokens", 0),
+            total_tokens=getattr(trace, "total_tokens", 0),
         timed_out=trace.timed_out,
         unit_test_passed=getattr(trace, "_unit_test_passed", False),
         unit_test_output=getattr(trace, "_unit_test_output", ""),
@@ -55,6 +59,7 @@ def evaluate_scenario_a(scenario: Scenario, dev_model: str, admin_model: str) ->
         judge_score=judge_score,
         is_correct_decision=None,
         dataset_label=getattr(scenario, "_source_label", "dataset_a"),
+        turns=trace.turns,
     )
     result.__dict__["hallucinated_imports"] = hallucinated
     result.__dict__["assertions_passed"]    = getattr(trace, "_assertions_passed", 0)

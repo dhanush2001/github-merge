@@ -64,6 +64,10 @@ def run_single(scenario, dev_model, admin_model, dataset_label) -> ScenarioResul
         expected_outcome=scenario.expected_outcome,
         total_turns=trace.total_turns,
         total_dev_chars=trace.total_dev_chars,
+        total_dev_tokens=getattr(trace, "total_dev_tokens", 0),
+        total_admin_chars=getattr(trace, "total_admin_chars", 0),
+        total_admin_tokens=getattr(trace, "total_admin_tokens", 0),
+        total_tokens=getattr(trace, "total_tokens", 0),
         timed_out=trace.timed_out,
         unit_test_passed=getattr(trace, "_unit_test_passed", False),
         unit_test_output=getattr(trace, "_unit_test_output", ""),
@@ -71,6 +75,7 @@ def run_single(scenario, dev_model, admin_model, dataset_label) -> ScenarioResul
         judge_score=judge_score,
         is_correct_decision=is_correct,
         dataset_label=dataset_label,
+        turns=trace.turns,
     )
     result.__dict__["hallucinated_imports"] = hallucinated
     result.__dict__["assertions_passed"]    = getattr(trace, "_assertions_passed", 0)
@@ -99,6 +104,7 @@ def main(args):
         pairings = [(d, a) for d, a in pairings if d != a]
 
     all_results = []
+    conversation_logs = []
     for dev_model, admin_model in pairings:
         print(f"\n  Dev: {dev_model}  |  Admin: {admin_model}")
         for scenario, label in all_scenarios:
@@ -106,13 +112,30 @@ def main(args):
             try:
                 result = run_single(scenario, dev_model, admin_model, label)
                 all_results.append(result)
+                conversation_logs.append(
+                    {
+                        "scenario_id": result.scenario_id,
+                        "dataset_label": result.dataset_label,
+                        "dataset_type": str(result.dataset_type),
+                        "category": result.category,
+                        "dev_model": result.dev_model,
+                        "admin_model": result.admin_model,
+                        "final_decision": str(result.final_decision),
+                        "total_turns": result.total_turns,
+                        "turns": [t.model_dump() for t in result.turns],
+                    }
+                )
                 status = "✓" if result.final_decision == AdminDecision.APPROVE else "✗"
-                print(f"{status} Turns:{result.total_turns} Tests:{result.unit_test_passed}")
+                print(
+                    f"{status} Turns:{result.total_turns} "
+                    f"Tokens:{result.total_tokens} Tests:{result.unit_test_passed}"
+                )
             except Exception as e:
                 print(f"ERROR: {e}")
 
     out_json = f"{CFG.results_dir}/results_{run_id}.json"
     out_csv  = f"{CFG.results_dir}/results_{run_id}.csv"
+    out_conversation_json = f"{CFG.results_dir}/conversation_logs_{run_id}.json"
     
     # Verify results directory exists before writing
     if not os.path.exists(CFG.results_dir):
@@ -122,7 +145,11 @@ def main(args):
         print(f"[INFO] Created directory: {CFG.results_dir}")
     
     with open(out_json, "w") as f:
-        json.dump([r.model_dump() for r in all_results], f, indent=2, default=str)
+        json.dump([r.model_dump(exclude={"turns"}) for r in all_results], f, indent=2, default=str)
+
+    with open(out_conversation_json, "w") as f:
+        json.dump(conversation_logs, f, indent=2, default=str)
+
     results_to_dataframe(all_results).to_csv(out_csv, index=False)
 
     metrics = compute_all_metrics(all_results)
@@ -130,6 +157,7 @@ def main(args):
         json.dump(metrics, f, indent=2)
 
     print(f"\nDone. Results: {out_json}")
+    print(f"Conversation logs: {out_conversation_json}")
 
 
 if __name__ == "__main__":
