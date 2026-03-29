@@ -8,39 +8,57 @@ import time
 
 def run_negotiation(scenario: Scenario, dev_model: str, admin_model: str) -> NegotiationTrace:
     turns = []
-    history = []
+    # Maintain separate histories to prevent hint leakage
+    dev_history = []
+    admin_history = []
     admin_feedback = ""
     final_merged_code = None
     timed_out = False
     decision = None
 
+    # Trackers for new token/char counts
+    total_dev_chars = 0
+    total_dev_tokens = 0
+    total_admin_chars = 0
+    total_admin_tokens = 0
+
     for turn_num in range(1, CFG.max_turns + 1):
         # Step 1: Developer argues
-        dev_argument, dev_char_count, dev_token_count = call_developer(
-            scenario, dev_model, history, admin_feedback
+        dev_argument, dev_chars, dev_tokens, dev_history = call_developer(
+            scenario=scenario, 
+            model_key=dev_model, 
+            conversation_history=dev_history, 
+            admin_feedback=admin_feedback,
+            turn=turn_num
         )
         
+        total_dev_chars += dev_chars
+        total_dev_tokens += dev_tokens
+
         # Step 2: Admin reviews
-        decision, merged_code, admin_feedback, admin_char_count, admin_token_count = call_admin(
-            scenario, admin_model, dev_argument, turn_num
+        decision, merged_code, admin_feedback, confidence, admin_chars, admin_tokens, admin_history = call_admin(
+            scenario=scenario, 
+            model_key=admin_model, 
+            dev_argument=dev_argument, 
+            turn=turn_num,
+            conversation_history=admin_history
         )
         
+        total_admin_chars += admin_chars
+        total_admin_tokens += admin_tokens
+
         turn = NegotiationTurn(
             turn=turn_num,
             dev_argument=dev_argument,
-            dev_char_count=dev_char_count,
-            dev_token_count=dev_token_count,
+            dev_char_count=dev_chars,
+            dev_token_count=dev_tokens,
             admin_decision=decision,
             admin_feedback=admin_feedback,
-            admin_char_count=admin_char_count,
-            admin_token_count=admin_token_count,
-        )
+            admin_char_count=admin_chars,
+            admin_token_count=admin_tokens,
+        )             
         turns.append(turn)
-        
-        # Append to dev's conversation history for next round
-        history.extend([
-            {"role": "assistant", "content": dev_argument},
-        ])
+
         # Routing logic:
         # - APPROVE ends negotiation immediately.
         # - CLARIFY trigger another persuasion turn until max_turns.
@@ -54,6 +72,7 @@ def run_negotiation(scenario: Scenario, dev_model: str, admin_model: str) -> Neg
     else:
         # If no approval within max_turns, finalize as Timeedout 
         timed_out = True
+        decision = AdminDecision.TIMEOUT
 
     # Run unit tests on final merged code (or base+commit if no merge)
     test_code = final_merged_code or scenario.developer_commit
@@ -85,4 +104,5 @@ def run_negotiation(scenario: Scenario, dev_model: str, admin_model: str) -> Neg
     trace._survival_result = survival_result
     trace._assertions_passed = test_result.assertions_passed
     trace._assertions_total = test_result.assertions_total
+
     return trace
