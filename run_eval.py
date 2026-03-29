@@ -21,6 +21,7 @@ def _extract_survival_rate(trace) -> float:
 def load_all_scenarios():
     all_scenarios = []
     enabled_entries = [entry for entry in CFG.datasets if entry.enabled]
+    # TODO: Remove restriction for multiple datasets when ready
     if len(enabled_entries) > 1:
         print(f"  [WARN] Multiple datasets enabled; using only: {enabled_entries[0].label}")
         enabled_entries = enabled_entries[:1]
@@ -88,6 +89,7 @@ def main(args):
     run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
 
     if args.datasets:
+        # TODO: Remove restriction for multiple datasets when ready
         if len(args.datasets) > 1:
             print(f"  [WARN] Multiple --datasets values provided; using only: {args.datasets[0]}")
             args.datasets = args.datasets[:1]

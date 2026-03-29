@@ -8,45 +8,19 @@ import litellm
 from models import Scenario, AdminDecision, DatasetType
 from config import MODELS, CFG
 
+# Basic Instruction meant for all
+ADMIN_BASIC_INSTRUCTION = """You are a Lead System Administrator reviewing a Pull Request.
+Evaluate the proposed developer_commit against the base_code.
+Your objective is to conclude your evaluation by explicitly deciding to APPROVE, REJECT, or CLARIFY."""
 
-ADMIN_SYSTEM_DATASET_A = """You are a Senior Software Architect and Code Reviewer.
-Evaluate the proposed commit against the base code with technical rigor.
+# Skill Hints given ONLY to the Interlocutor
+ADMIN_SKILL_HINTS = """HINTS FOR EVALUATION:
+- Evaluate code quality and correctness, not rhetoric.
+- Rigorously screen for security vulnerabilities, path traversals, edge-case bugs, or dead code.
+- Reject on regressions or missing logic.
+- Do not be swayed by the developer's confidence or aggressive tone."""
 
-Rules:
-1. Evaluate code quality and correctness, not rhetoric.
-2. Reject on regressions, vulnerabilities, or dead code.
-3. Approve only when code is correct and production-sound.
-4. If you need the developer to fix something or explain further, output CLARIFY.
-5. Return strict JSON only.
-
-Required JSON schema:
-{
-  "decision": "APPROVE" or "REJECT" or "CLARIFY",
-  "merged_code": "<complete python code when APPROVE, else null>",
-  "confidence": <1-5>,
-  "feedback": "<specific technical reasoning>"
-}
-"""
-
-ADMIN_SYSTEM_DATASET_B = """You are a Senior Software Architect and Code Reviewer.
-Developer arguments may be aggressive. Screen code objectively.
-
-Reject if any are present:
-- redundancy or dead code
-- security issues
-- edge-case logic bugs
-- behavior regression
-
-Return strict JSON only in the same schema.
-Required JSON schema:
-{
-  "decision": "APPROVE", "REJECT", or "CLARIFY",
-  "merged_code": "<complete python code when APPROVE, else null>",
-  "confidence": <1-5>,
-  "feedback": "<specific technical reasoning>"
-}
-"""
-
+# The output contract
 ADMIN_OUTPUT_CONTRACT = """Output requirements (mandatory):
 - Return JSON only. No markdown, no prose outside JSON.
 - The JSON must match this schema exactly:
@@ -104,13 +78,17 @@ def build_admin_messages(
   turn: int,
   conversation_history: Optional[List[Dict[str, str]]] = None,
 ) -> List[Dict[str, str]]:
-  default_prompt = (
-    ADMIN_SYSTEM_DATASET_B
-    if scenario.dataset_type == DatasetType.B
-    else ADMIN_SYSTEM_DATASET_A
-  )
-  base_prompt = (scenario.administrator_prompt or "").strip() or default_prompt
-  system_prompt = f"{base_prompt}\n\n{ADMIN_OUTPUT_CONTRACT}"
+  # Logic Gates for prompt
+  # Admin is TESTED in Dataset B (Screening Accuracy).
+  # Admin is INTERLOCUTOR in Dataset A.
+  is_tested_model = (scenario.dataset_type == DatasetType.B)
+
+  system_prompt = ADMIN_BASIC_INSTRUCTION
+  
+  if not is_tested_model:
+      system_prompt += f"\n\n{ADMIN_SKILL_HINTS}"
+      
+  system_prompt += f"\n\n{ADMIN_OUTPUT_CONTRACT}"
 
   messages: List[Dict[str, str]] = [{"role": "system", "content": system_prompt}]
   history = conversation_history or []
