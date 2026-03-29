@@ -1,7 +1,7 @@
 import json, os
 from datetime import datetime
 from typing import List
-from models import Scenario, ScenarioResult, AdminDecision, DatasetType
+from models import Scenario, ScenarioResult, AdminDecision, DatasetType, NegotiationTurn
 from agents.developer_agent import call_developer
 from agents.admin_agent import call_admin
 from pipeline.code_runner import run_unit_tests
@@ -66,9 +66,12 @@ def evaluate_scenario_b(
     timed_out = False
     turns_log = []
     total_dev_chars = 0
+    total_dev_tokens = 0
+    total_admin_chars = 0
+    total_admin_tokens = 0
 
     for turn_num in range(1, CFG.max_turns + 1):
-        dev_argument, dev_chars, dev_history = call_developer(
+        dev_argument, dev_chars, dev_tokens, dev_history = call_developer(
             scenario=scenario,
             model_key=dev_model,
             conversation_history=dev_history,
@@ -76,22 +79,27 @@ def evaluate_scenario_b(
             turn=turn_num,
         )
         total_dev_chars += dev_chars
+        total_dev_tokens += dev_tokens
 
-        decision, merged_code, admin_feedback, confidence, admin_chars, admin_history = call_admin(
+        decision, merged_code, admin_feedback, confidence, admin_chars, admin_tokens, admin_history = call_admin(
             scenario=scenario,
             model_key=admin_model,
             dev_argument=dev_argument,
             turn=turn_num,
             conversation_history=admin_history,
         )
+        total_admin_chars += admin_chars
+        total_admin_tokens += admin_tokens
 
         turns_log.append({
             "turn":             turn_num,
             "dev_chars":        dev_chars,
+            "dev_tokens":       dev_tokens,
             "admin_decision":   decision,
             "admin_feedback":   admin_feedback,
             "admin_confidence": confidence,
             "admin_chars":      admin_chars,
+            "admin_tokens":     admin_tokens,
         })
 
         if decision == AdminDecision.APPROVE:
@@ -120,6 +128,10 @@ def evaluate_scenario_b(
         expected_outcome=scenario.expected_outcome,
         total_turns=len(turns_log),
         total_dev_chars=total_dev_chars,
+        total_dev_tokens=total_dev_tokens,
+        total_admin_chars=total_admin_chars,
+        total_admin_tokens=total_admin_tokens,
+        total_tokens=total_dev_tokens + total_admin_tokens,
         timed_out=timed_out,
         unit_test_passed=test_result.passed,
         unit_test_output=test_result.output + test_result.error,
@@ -127,6 +139,16 @@ def evaluate_scenario_b(
         judge_score=None,
         is_correct_decision=is_correct,
         dataset_label=getattr(scenario, "_source_label", "dataset_b"),
+        turns=[NegotiationTurn(
+            turn=t["turn"],
+            dev_argument=dev_history[t["turn"]-1]["content"] if t["turn"]-1 < len(dev_history) else "",
+            dev_char_count=t["dev_chars"],
+            dev_token_count=t["dev_tokens"],
+            admin_decision=t["admin_decision"],
+            admin_feedback=t["admin_feedback"],
+            admin_char_count=t["admin_chars"],
+            admin_token_count=t["admin_tokens"],
+        ) for t in turns_log],
     )
     result.__dict__["assertions_passed"]   = test_result.assertions_passed
     result.__dict__["assertions_total"]    = test_result.assertions_total
