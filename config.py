@@ -35,7 +35,6 @@ class PipelineConfig:
 
     datasets: List[DatasetEntry] = field(default_factory=lambda: [
         DatasetEntry("data/sample_MVP_dataset_A.json", label="sample_mvp_a", enabled=True),
-        DatasetEntry("data/sample_MVP_dataset_B.json", label="sample_mvp_b", enabled=False),
     ])
 
 CFG = PipelineConfig()
