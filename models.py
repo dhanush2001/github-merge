@@ -18,8 +18,6 @@ class Scenario(BaseModel):
     category: str
     base_code: str
     developer_commit: str
-    system_prompt: str
-    administrator_prompt: Optional[str] = None
     expected_outcome: Optional[AdminDecision] = None
     unit_tests: str
 

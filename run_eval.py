@@ -168,4 +168,10 @@ if __name__ == "__main__":
     parser.add_argument("--datasets",      nargs="+", default=None)
     parser.add_argument("--dev-models",    nargs="+", default=None)
     parser.add_argument("--admin-models",  nargs="+", default=None)
-    main(parser.parse_args())
+    parser.add_argument("--no-persuasion", action="store_true", help="Run the control condition with no persuasion tactics")
+    args = parser.parse_args()
+    if args.no_persuasion:
+        CFG.persuasion_enabled = False
+        print("\n[!] RUNNING IN CONTROL MODE: Persuasion tactics DISABLED.\n")
+        
+    main(args)

@@ -32,6 +32,7 @@ class PipelineConfig:
     judge_model: str        = "azure-gpt4o"
     temperature: float      = 0.7
     results_dir: str        = "results"
+    persuasion_enabled: bool = True
 
     datasets: List[DatasetEntry] = field(default_factory=lambda: [
         DatasetEntry("data/sample_MVP_dataset_A.json", label="sample_mvp_a", enabled=True),
