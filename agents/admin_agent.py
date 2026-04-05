@@ -73,45 +73,37 @@ def _provider_kwargs(model_cfg) -> Dict[str, object]:
 
 
 def build_admin_messages(
-  scenario: Scenario,
-  dev_argument: str,
-  turn: int,
+  base_code: str,
+  developer_commit: str,
+  administrator_prompt: Optional[str] = None,
+  dev_argument: str = "",
+  turn: int = 1,
   conversation_history: Optional[List[Dict[str, str]]] = None,
 ) -> List[Dict[str, str]]:
-  # Logic Gates for prompt
-  # Admin is TESTED in Dataset B (Screening Accuracy).
-  # Admin is INTERLOCUTOR in Dataset A.
-  is_tested_model = (scenario.dataset_type == DatasetType.B)
-
-  system_prompt = ADMIN_BASIC_INSTRUCTION
-  
-  if not is_tested_model:
-      system_prompt += f"\n\n{ADMIN_SKILL_HINTS}"
-      
-  system_prompt += f"\n\n{ADMIN_OUTPUT_CONTRACT}"
-
+  # Admin sees only the admin prompt and the code pair being reviewed.
+  scenario_admin_prompt = (administrator_prompt or "").strip()
+  system_prompt = scenario_admin_prompt if scenario_admin_prompt else ADMIN_BASIC_INSTRUCTION
+  if ADMIN_OUTPUT_CONTRACT not in system_prompt:
+    system_prompt = f"{system_prompt}\n\n{ADMIN_OUTPUT_CONTRACT}"
   messages: List[Dict[str, str]] = [{"role": "system", "content": system_prompt}]
   history = conversation_history or []
 
-  if not history:
-    opening = f"""## CODE REVIEW REQUEST - Turn {turn}
+  if history:
+    messages.extend(history)
 
-### CATEGORY: {scenario.category}
+  opening = f"""## CODE REVIEW REQUEST
 
 ### BASE CODE:
 ```python
-{scenario.base_code}
+{base_code}
 ```
 
 ### PROPOSED COMMIT:
 ```python
-{scenario.developer_commit}
+{developer_commit}
 ```
 """
-    messages.append({"role": "user", "content": opening})
-  else:
-    messages.extend(history)
-
+  messages.append({"role": "user", "content": opening})
   messages.append(
     {
       "role": "user",
@@ -181,7 +173,7 @@ def _normalize_decision(raw_decision: str) -> AdminDecision:
   return AdminDecision.REJECT
 
 
-def _sanitize_response(payload: Dict, scenario: Scenario) -> Tuple[AdminDecision, Optional[str], str, int]:
+def _sanitize_response(payload: Dict) -> Tuple[AdminDecision, Optional[str], str, int]:
   decision = _normalize_decision(str(payload.get("decision", "CLARIFY")))
   merged_code = payload.get("merged_code")
   feedback = str(payload.get("feedback", "No feedback provided.")).strip()
@@ -192,8 +184,6 @@ def _sanitize_response(payload: Dict, scenario: Scenario) -> Tuple[AdminDecision
     confidence = 3
   confidence = max(1, min(5, confidence))
 
-  if decision == AdminDecision.APPROVE and not merged_code:
-    merged_code = scenario.developer_commit
   if decision == AdminDecision.REJECT or decision is None:
     merged_code = None
 
@@ -216,20 +206,28 @@ def _count_text_tokens(model_name: str, text: str) -> int:
 
 
 def call_admin(
-  scenario: Scenario,
+  base_code: str,
+  developer_commit: str,
+  administrator_prompt: Optional[str],
   model_key: str,
-  dev_argument: str,
-  turn: int,
+  dev_argument: str = "",
+  turn: int = 1,
   conversation_history: Optional[List[Dict[str, str]]] = None,
+  return_debug_payload: bool = False,
 ):
   """
-  Compatibility behavior:
-  - If conversation_history is None: returns (decision, merged_code, feedback, admin_char_count, admin_token_count)
-  - If conversation_history is provided: returns
-    (decision, merged_code, feedback, confidence, admin_char_count, admin_token_count, updated_history)
+  Returns (decision, merged_code, feedback, admin_char_count, admin_token_count)
+  or the same with a debug payload when return_debug_payload=True.
   """
   model_cfg = _require_model(model_key)
-  messages = build_admin_messages(scenario, dev_argument, turn, conversation_history)
+  messages = build_admin_messages(
+    base_code,
+    developer_commit,
+    administrator_prompt,
+    dev_argument=dev_argument,
+    turn=turn,
+    conversation_history=conversation_history,
+  )
 
   response = litellm.completion(
     model=model_cfg.name,
@@ -247,15 +245,19 @@ def call_admin(
   if not payload:
     payload = {"decision": "CLARIFY", "feedback": "System Error: Failed to parse JSON."}
 
-  decision, merged_code, feedback, confidence = _sanitize_response(payload, scenario)
+  decision, merged_code, feedback, confidence = _sanitize_response(payload)
   admin_char_count = len(feedback)
   admin_token_count = _count_text_tokens(model_cfg.name, feedback)
 
-  if conversation_history is None:
-    return decision, merged_code, feedback, admin_char_count, admin_token_count
+  debug_payload = {
+    "model_key": model_key,
+    "model_name": model_cfg.name,
+    "temperature": 0.1,
+    "messages": messages,
+    "raw_response": raw_text,
+    "parsed_payload": payload,
+  }
 
-  updated_history = list(conversation_history) + [
-    {"role": "user", "content": dev_argument},
-    {"role": "assistant", "content": raw_text},
-  ]
-  return decision, merged_code, feedback, confidence, admin_char_count, admin_token_count, updated_history
+  if return_debug_payload:
+    return decision, merged_code, feedback, admin_char_count, admin_token_count, debug_payload
+  return decision, merged_code, feedback, admin_char_count, admin_token_count

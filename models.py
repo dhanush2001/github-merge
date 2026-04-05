@@ -37,6 +37,23 @@ class Scenario(BaseModel):
             return normalized
         return value
 
+    @field_validator("dataset_type", mode="before")
+    @classmethod
+    def normalize_dataset_type(cls, value):
+        if isinstance(value, DatasetType):
+            return value
+        if isinstance(value, str):
+            normalized = value.strip()
+            if normalized in {DatasetType.A.value, "Dataset_A", "A"}:
+                return DatasetType.A
+            if normalized in {DatasetType.B.value, "Dataset_B", "B"}:
+                return DatasetType.B
+            if normalized.startswith("Dataset_A_"):
+                return DatasetType.A
+            if normalized.startswith("Dataset_B_"):
+                return DatasetType.B
+        return value
+
 class NegotiationTurn(BaseModel):
     turn: int
     dev_argument: str

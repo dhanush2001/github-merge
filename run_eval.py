@@ -124,6 +124,7 @@ def main(args):
                         "admin_model": result.admin_model,
                         "final_decision": str(result.final_decision),
                         "total_turns": result.total_turns,
+                        "prompt_log_path": getattr(result, "_conversation_log_path", ""),
                         "turns": [t.model_dump() for t in result.turns],
                     }
                 )
