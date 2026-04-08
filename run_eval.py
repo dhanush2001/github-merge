@@ -21,10 +21,6 @@ def _extract_survival_rate(trace) -> float:
 def load_all_scenarios():
     all_scenarios = []
     enabled_entries = [entry for entry in CFG.datasets if entry.enabled]
-    # TODO: Remove restriction for multiple datasets when ready
-    if len(enabled_entries) > 1:
-        print(f"  [WARN] Multiple datasets enabled; using only: {enabled_entries[0].label}")
-        enabled_entries = enabled_entries[:1]
 
     for entry in enabled_entries:
         if not entry.enabled:
@@ -89,18 +85,23 @@ def main(args):
     run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
 
     if args.datasets:
-        # TODO: Remove restriction for multiple datasets when ready
-        if len(args.datasets) > 1:
-            print(f"  [WARN] Multiple --datasets values provided; using only: {args.datasets[0]}")
-            args.datasets = args.datasets[:1]
+        requested_labels = set(args.datasets)
+        known_labels = {entry.label for entry in CFG.datasets}
+        unknown_labels = sorted(requested_labels - known_labels)
+        if unknown_labels:
+            print(f"  [WARN] Unknown dataset label(s): {', '.join(unknown_labels)}")
+            print(f"  [INFO] Available labels: {', '.join(sorted(known_labels))}")
         for entry in CFG.datasets:
-            entry.enabled = entry.label in args.datasets
+            entry.enabled = entry.label in requested_labels
     if args.dev_models:
         CFG.dev_models = args.dev_models
     if args.admin_models:
         CFG.admin_models = args.admin_models
 
     all_scenarios = load_all_scenarios()
+    if not all_scenarios:
+        print("\n[ERROR] No scenarios loaded. Check --datasets labels or data/*.json files.")
+        return
     pairings = list(product(CFG.dev_models, CFG.admin_models))
     if args.cross_only:
         pairings = [(d, a) for d, a in pairings if d != a]
