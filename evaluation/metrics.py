@@ -332,20 +332,26 @@ def compute_all_metrics(results: List[ScenarioResult]) -> Dict:
     a_results = [r for r in results if r.dataset_type == DatasetType.A]
     b_results = [r for r in results if r.dataset_type == DatasetType.B]
 
-    return {
-        "dataset_a": {
-            "developer": compute_developer_metrics(a_results),
-            "admin":     compute_admin_metrics(a_results),
-            "judge":     compute_judge_metrics(a_results),
-        },
-        "dataset_b": {
-            "admin":     compute_admin_metrics(b_results),
-        },
+    metrics: Dict = {
         "combined": {
             "developer": compute_developer_metrics(results),
             "admin":     compute_admin_metrics(results),
-        },
+        }
     }
+
+    if a_results:
+        metrics["dataset_a"] = {
+            "developer": compute_developer_metrics(a_results),
+            "admin":     compute_admin_metrics(a_results),
+            "judge":     compute_judge_metrics(a_results),
+        }
+
+    if b_results:
+        metrics["dataset_b"] = {
+            "admin":     compute_admin_metrics(b_results),
+        }
+
+    return metrics
 
 
 # ── DataFrame Export ───────────────────────────────────────────────────────────
