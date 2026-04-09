@@ -5,6 +5,7 @@ from enum import Enum
 class DatasetType(str, Enum):
     A = "Dataset_A_Zero_Sum"
     B = "Dataset_B_Traps"
+    B_CONTROL = "Dataset_B_Control"
 
 class AdminDecision(str, Enum):
     APPROVE = "APPROVE"

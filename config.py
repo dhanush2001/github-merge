@@ -2,6 +2,13 @@ import os
 from dataclasses import dataclass, field
 from typing import List
 from pathlib import Path
+from dotenv import load_dotenv
+import litellm
+
+load_dotenv()
+
+litellm.set_verbose = False
+litellm.suppress_debug_info = True
 
 @dataclass
 class ModelConfig:
