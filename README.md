@@ -157,8 +157,6 @@ Outputs are written to `results/` (configured by `CFG.results_dir` in `config.py
 - `results_<timestamp>.json`: per-scenario raw results
 - `results_<timestamp>.csv`: flattened tabular results
 - `metrics_<timestamp>.json`: aggregated metrics
-- `conversation_logs_<timestamp>.json`: per-scenario turn summaries with `prompt_log_path`
-- `prompt_logs/conversation_<scenario>_<dev>_vs_<admin>_<timestamp>.json`: full per-conversation trace including every prompt message each agent saw and each raw response
 
 ## Troubleshooting
 

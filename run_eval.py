@@ -21,10 +21,6 @@ def _extract_survival_rate(trace) -> float:
 def load_all_scenarios():
     all_scenarios = []
     enabled_entries = [entry for entry in CFG.datasets if entry.enabled]
-    # TODO: Remove restriction for multiple datasets when ready
-    if len(enabled_entries) > 1:
-        print(f"  [WARN] Multiple datasets enabled; using only: {enabled_entries[0].label}")
-        enabled_entries = enabled_entries[:1]
 
     for entry in enabled_entries:
         if not entry.enabled:
@@ -87,20 +83,26 @@ def run_single(scenario, dev_model, admin_model, dataset_label) -> ScenarioResul
 def main(args):
     os.makedirs(CFG.results_dir, exist_ok=True)
     run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+    run_mode = "persuasion" if CFG.persuasion_enabled else "control"
 
     if args.datasets:
-        # TODO: Remove restriction for multiple datasets when ready
-        if len(args.datasets) > 1:
-            print(f"  [WARN] Multiple --datasets values provided; using only: {args.datasets[0]}")
-            args.datasets = args.datasets[:1]
+        requested_labels = set(args.datasets)
+        known_labels = {entry.label for entry in CFG.datasets}
+        unknown_labels = sorted(requested_labels - known_labels)
+        if unknown_labels:
+            print(f"  [WARN] Unknown dataset label(s): {', '.join(unknown_labels)}")
+            print(f"  [INFO] Available labels: {', '.join(sorted(known_labels))}")
         for entry in CFG.datasets:
-            entry.enabled = entry.label in args.datasets
+            entry.enabled = entry.label in requested_labels
     if args.dev_models:
         CFG.dev_models = args.dev_models
     if args.admin_models:
         CFG.admin_models = args.admin_models
 
     all_scenarios = load_all_scenarios()
+    if not all_scenarios:
+        print("\n[ERROR] No scenarios loaded. Check --datasets labels or data/*.json files.")
+        return
     pairings = list(product(CFG.dev_models, CFG.admin_models))
     if args.cross_only:
         pairings = [(d, a) for d, a in pairings if d != a]
@@ -117,6 +119,7 @@ def main(args):
                 conversation_logs.append(
                     {
                         "scenario_id": result.scenario_id,
+                        "run_mode": run_mode,
                         "dataset_label": result.dataset_label,
                         "dataset_type": str(result.dataset_type),
                         "category": result.category,
@@ -124,7 +127,6 @@ def main(args):
                         "admin_model": result.admin_model,
                         "final_decision": str(result.final_decision),
                         "total_turns": result.total_turns,
-                        "prompt_log_path": getattr(result, "_conversation_log_path", ""),
                         "turns": [t.model_dump() for t in result.turns],
                     }
                 )
@@ -156,6 +158,12 @@ def main(args):
     results_to_dataframe(all_results).to_csv(out_csv, index=False)
 
     metrics = compute_all_metrics(all_results)
+    metrics["run_meta"] = {
+        "run_id": run_id,
+        "run_mode": run_mode,
+        "persuasion_enabled": CFG.persuasion_enabled,
+        "temperature": CFG.persuasion_temperature if CFG.persuasion_enabled else CFG.control_temperature,
+    }
     with open(f"{CFG.results_dir}/metrics_{run_id}.json", "w") as f:
         json.dump(metrics, f, indent=2)
 
@@ -169,4 +177,10 @@ if __name__ == "__main__":
     parser.add_argument("--datasets",      nargs="+", default=None)
     parser.add_argument("--dev-models",    nargs="+", default=None)
     parser.add_argument("--admin-models",  nargs="+", default=None)
-    main(parser.parse_args())
+    parser.add_argument("--no-persuasion", action="store_true", help="Run the control condition with no persuasion tactics")
+    args = parser.parse_args()
+    if args.no_persuasion:
+        CFG.persuasion_enabled = False
+        print("\n[!] RUNNING IN CONTROL MODE: Persuasion tactics DISABLED.\n")
+        
+    main(args)

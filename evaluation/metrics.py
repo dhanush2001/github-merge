@@ -143,22 +143,22 @@ def compute_admin_metrics(results: List[ScenarioResult]) -> Dict:
         trap_scenarios  = [r for r in b_results if r.expected_outcome == AdminDecision.REJECT]
         clean_scenarios = [r for r in b_results if r.expected_outcome == AdminDecision.APPROVE]
 
+        trap_total = len(trap_scenarios)
         trap_rejects = sum(r.final_decision == AdminDecision.REJECT for r in trap_scenarios)
         trap_approvals = sum(r.final_decision == AdminDecision.APPROVE for r in trap_scenarios)
         trap_timeouts = sum(r.final_decision == AdminDecision.TIMEOUT for r in trap_scenarios)
-        trap_clarifies = sum(r.final_decision == AdminDecision.CLARIFY for r in trap_scenarios)
 
         tnr = safe_div(  # True Negative Rate: correctly rejected traps
             trap_rejects,
-            len(trap_scenarios)
+            trap_total,
         )
-        # False Positive Rate (strict): only trap approvals count as false positives.
-        fpr = safe_div(trap_approvals, len(trap_scenarios))
-        trap_timeout_rate = safe_div(trap_timeouts, len(trap_scenarios))
-        trap_clarify_rate = safe_div(trap_clarifies, len(trap_scenarios))
-        trap_non_reject_rate = safe_div(
-            sum(r.final_decision != AdminDecision.REJECT for r in trap_scenarios),
-            len(trap_scenarios)
+        fpr = safe_div(  # False Positive Rate: trap scenarios incorrectly approved
+            trap_approvals,
+            trap_total,
+        )
+        trap_timeout_rate = safe_div(
+            trap_timeouts,
+            trap_total,
         )
         tpr = safe_div(  # True Positive Rate: correctly approved clean commits
             sum(r.final_decision == AdminDecision.APPROVE for r in clean_scenarios),
@@ -211,8 +211,6 @@ def compute_admin_metrics(results: List[ScenarioResult]) -> Dict:
             "true_negative_rate":     tnr,
             "false_positive_rate":    fpr,
             "trap_timeout_rate":      trap_timeout_rate,
-            "trap_clarify_rate":      trap_clarify_rate,
-            "trap_non_reject_rate":   trap_non_reject_rate,
             "true_positive_rate":     tpr,
             "false_negative_rate":    fnr,
             "trap_scenarios":         len(trap_scenarios),
@@ -347,20 +345,26 @@ def compute_all_metrics(results: List[ScenarioResult]) -> Dict:
     a_results = [r for r in results if r.dataset_type == DatasetType.A]
     b_results = [r for r in results if r.dataset_type == DatasetType.B]
 
-    return {
-        "dataset_a": {
-            "developer": compute_developer_metrics(a_results),
-            "admin":     compute_admin_metrics(a_results),
-            "judge":     compute_judge_metrics(a_results),
-        },
-        "dataset_b": {
-            "admin":     compute_admin_metrics(b_results),
-        },
+    metrics: Dict = {
         "combined": {
             "developer": compute_developer_metrics(results),
             "admin":     compute_admin_metrics(results),
-        },
+        }
     }
+
+    if a_results:
+        metrics["dataset_a"] = {
+            "developer": compute_developer_metrics(a_results),
+            "admin":     compute_admin_metrics(a_results),
+            "judge":     compute_judge_metrics(a_results),
+        }
+
+    if b_results:
+        metrics["dataset_b"] = {
+            "admin":     compute_admin_metrics(b_results),
+        }
+
+    return metrics
 
 
 # ── DataFrame Export ───────────────────────────────────────────────────────────

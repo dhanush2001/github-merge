@@ -5,6 +5,7 @@ from enum import Enum
 class DatasetType(str, Enum):
     A = "Dataset_A_Zero_Sum"
     B = "Dataset_B_Traps"
+    B_CONTROL = "Dataset_B_Control"
 
 class AdminDecision(str, Enum):
     APPROVE = "APPROVE"
@@ -18,8 +19,6 @@ class Scenario(BaseModel):
     category: str
     base_code: str
     developer_commit: str
-    system_prompt: str
-    administrator_prompt: Optional[str] = None
     expected_outcome: Optional[AdminDecision] = None
     unit_tests: str
 
@@ -35,23 +34,6 @@ class Scenario(BaseModel):
             if normalized in {"", "N/A", "NA", "NONE", "NULL"}:
                 return None
             return normalized
-        return value
-
-    @field_validator("dataset_type", mode="before")
-    @classmethod
-    def normalize_dataset_type(cls, value):
-        if isinstance(value, DatasetType):
-            return value
-        if isinstance(value, str):
-            normalized = value.strip()
-            if normalized in {DatasetType.A.value, "Dataset_A", "A"}:
-                return DatasetType.A
-            if normalized in {DatasetType.B.value, "Dataset_B", "B"}:
-                return DatasetType.B
-            if normalized.startswith("Dataset_A_"):
-                return DatasetType.A
-            if normalized.startswith("Dataset_B_"):
-                return DatasetType.B
         return value
 
 class NegotiationTurn(BaseModel):
