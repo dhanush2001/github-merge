@@ -56,7 +56,6 @@ class PipelineConfig:
     admin_models: List[str] = field(default_factory=lambda: list(MODELS.keys()))
     max_turns: int          = 10
     judge_model: str        = "azure-gpt4o"
-    temperature: float      = 0.7
     persuasion_temperature: float = 0.35
     control_temperature: float = 0.1
     results_dir: str        = "results"
