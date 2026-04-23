@@ -1,0 +1,4 @@
+admin_model,Objective_Trap,Redundancy_Trap,Security_Trap
+azure-gpt4o,0.55,0.5166666666666667,0.3
+openrouter-claude-opus,0.016666666666666666,0.06666666666666667,0.0
+openrouter-claude-sonnet,0.05,0.03333333333333333,0.0
