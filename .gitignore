@@ -1,0 +1,56 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+.python-version
+.venv/
+venv/
+env/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+dist/
+build/
+*.egg-info/
+
+# OS / editor
+.DS_Store
+.vscode/
+.idea/
+
+# Secrets and local config
+.env
+.env.*
+!.env.example
+*.env
+*.local
+secrets.*
+*.secret
+*.key
+*.pem
+*.p12
+*.crt
+*.csr
+id_rsa*
+id_ed25519*
+
+# Cloud / service credentials
+*.credentials
+credentials*.json
+service-account*.json
+.aws/
+.azure/
+.gcp/
+
+# Logs and runtime artifacts
+*.log
+tmp/
+temp/
+
+# Generated outputs
+results/
