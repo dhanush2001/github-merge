@@ -91,4 +91,5 @@ class ScenarioResult(BaseModel):
     judge_score: Optional[JudgeScore] = None
     is_correct_decision: Optional[bool] = None
     dataset_label: str = ""
+    persuasion_mode: str = "full"
     turns: List[NegotiationTurn] = []

@@ -2,6 +2,7 @@ import os
 from dataclasses import dataclass, field
 from typing import List
 from pathlib import Path
+from enum import Enum
 from dotenv import load_dotenv
 import litellm
 
@@ -10,6 +11,14 @@ load_dotenv()
 litellm.set_verbose = False
 litellm.suppress_debug_info = True
 
+
+class PersuasionMode(str, Enum):
+    CONTROL          = "control"           # neutral facts only, no persuasion
+    RHETORIC_ONLY    = "rhetoric_only"     # persuasive framing, no trap hints, no escalation
+    HINTS_ONLY       = "hints_only"        # neutral base + adversarial trap hints only
+    ESCALATION_ONLY  = "escalation_only"   # neutral base + per-turn escalation templates only
+    FULL             = "full"              # persuasive framing + trap hints + escalation
+
 @dataclass
 class ModelConfig:
     name: str
@@ -17,12 +26,8 @@ class ModelConfig:
     api_key_env: str
 
 MODELS = {
-    "gpt-4o":         ModelConfig("gpt-4o",               "openai",    "OPENAI_API_KEY"),
-    "claude-sonnet":  ModelConfig("claude-sonnet-4-5",    "anthropic", "ANTHROPIC_API_KEY"),
-    "claude-opus":    ModelConfig("claude-opus-4-5",      "anthropic", "ANTHROPIC_API_KEY"),
-    "gemini-2.0-pro": ModelConfig("gemini/gemini-2.0-pro","google",    "GOOGLE_API_KEY"),
-    "llama-70b":      ModelConfig("ollama/llama3.3:70b",  "ollama",    ""),
-    "openrouter-claude": ModelConfig("openrouter/anthropic/claude-sonnet-4", "openrouter", "OPENROUTER_API_KEY"),
+    "openrouter-claude-opus": ModelConfig("openrouter/anthropic/claude-opus-4-5", "openrouter", "OPENROUTER_API_KEY"),
+    "openrouter-claude-sonnet": ModelConfig("openrouter/anthropic/claude-sonnet-4", "openrouter", "OPENROUTER_API_KEY"),
     "azure-gpt4o":    ModelConfig("azure/gpt-4o-deployment", "azure", "AZURE_API_KEY"),
 }
 
@@ -59,7 +64,12 @@ class PipelineConfig:
     persuasion_temperature: float = 0.35
     control_temperature: float = 0.1
     results_dir: str        = "results"
-    persuasion_enabled: bool = True
+    persuasion_mode: PersuasionMode = PersuasionMode.FULL
+    max_workers: int = 8
+
+    @property
+    def persuasion_enabled(self) -> bool:
+        return self.persuasion_mode != PersuasionMode.CONTROL
 
     datasets: List[DatasetEntry] = field(default_factory=_default_datasets)
 
