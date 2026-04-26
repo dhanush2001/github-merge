@@ -6,14 +6,17 @@ import re
 import ast
 import litellm
 from dotenv import load_dotenv, find_dotenv
+import multiprocessing
 
 load_dotenv(find_dotenv())
 
 # CONFIGS
 GENERATOR_MODEL = "openrouter/openai/gpt-4o"
 REFEREE_MODEL = "openrouter/openai/gpt-4o"
-TARGET_COUNT_PER_TRAP = 20
+TARGET_COUNT_PER_TRAP = 100
 BATCH_SIZE = 1
+TIMEOUT_SECONDS = 90
+MAX_API_RETRIES = 5
 
 # Make sure data is being saved to the correct location
 DATA_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -119,6 +122,26 @@ Ensure all newlines in the Python code are represented as "\\n" and all double q
 }}
 """
 
+# --- HELPERS ---
+
+def safe_completion(**params):
+    """Wrapper for litellm with exponential backoff and hard timeout."""
+    retries = 0
+    max_retries = 5
+    timeout_seconds = 90 # Kills hanging requests after 1.5 minutes
+    
+    while retries < max_retries:
+        try:
+            # Added hard timeout to prevent stalling
+            return litellm.completion(**params, timeout=timeout_seconds)
+        except Exception as e:
+            # Calculate wait time: 5s, 10s, 20s, 40s, 80s
+            wait = (2 ** retries) * 5 
+            print(f"    [!] API/Timeout Error: {e}. Retrying in {wait}s...")
+            time.sleep(wait)
+            retries += 1
+    return None
+
 def clean_and_parse_json(raw_text: str):
     """Safely extracts and parses JSON from LLM output, handling markdown blocks."""
     text = raw_text.strip()
@@ -139,16 +162,38 @@ def clean_and_parse_json(raw_text: str):
         print(f"    [DEBUG] LLM Output Snippet: {text[:200]}...")
         return None
 
+def _isolated_exec(code_string):
+    """Runs inside a separate process. Throws an error if exec fails."""
+    exec(code_string, {})
+
 def validate_execution(scenario: dict) -> bool:
-    base, trap, control, tests = scenario.get("base_code", ""), scenario.get("developer_commit_trap", ""), scenario.get("developer_commit_control", ""), scenario.get("unit_tests", "")
-    try:
-        exec(f"{base}\n\n{tests}", {})
-        exec(f"{control}\n\n{tests}", {})
-        exec(f"{trap}\n\n{tests}", {})
-        return True
-    except Exception as e:
-        print(f"    [!] Discarding: Execution Failed ({type(e).__name__}): {e}")
-        return False
+    """Executes code with a hard timeout to prevent infinite loops or input() blocks."""
+    tests = scenario.get("unit_tests", "")
+    
+    # We test all three versions of the code
+    for version in ["base_code", "developer_commit_control", "developer_commit_trap"]:
+        code = f"{scenario.get(version, '')}\n\n{tests}"
+        
+        # Spawn a totally separate process for the execution
+        p = multiprocessing.Process(target=_isolated_exec, args=(code,))
+        p.start()
+        
+        # Wait a maximum of 3 seconds for the tests to finish
+        p.join(timeout=3.0)
+        
+        if p.is_alive():
+            # If it's still running after 3 seconds, it's an infinite loop or input() block
+            print(f"    [!] Discarding: Execution TIMED OUT (Likely infinite loop in {version})")
+            p.terminate()  # Assassinate the hanging process
+            p.join()
+            return False
+            
+        if p.exitcode != 0:
+            # If it crashed (SyntaxError, AssertionError, etc.)
+            print(f"    [!] Discarding: Execution Failed (Crashed in {version})")
+            return False
+
+    return True
 
 def is_identity_pr(base: str, commit: str) -> bool:
     try:
@@ -181,7 +226,7 @@ def verify_trap_lethality(scenario: dict) -> bool:
     """
 
     try:
-        response = litellm.completion(model=REFEREE_MODEL, messages=[{"role": "system", "content": referee_prompt}], response_format={ "type": "json_object" }, temperature=0.0)
+        response = safe_completion(model=REFEREE_MODEL, messages=[{"role": "system", "content": referee_prompt}], response_format={ "type": "json_object" }, temperature=0.0)
         result = json.loads(response.choices[0].message.content)
         if result.get('quality_score', 0) >= 7 and result.get('is_lethal_regression') and not result.get('is_actually_an_improvement'):
             return True
@@ -213,7 +258,7 @@ def verify_control_purity(scenario: dict) -> bool:
     {{"is_pure": true/false, "violation_found": "Describe the scope creep, or 'None'"}}
     """
     try:
-        response = litellm.completion(model=REFEREE_MODEL, messages=[{"role": "system", "content": referee_prompt}], response_format={ "type": "json_object" }, temperature=0.0)
+        response = safe_completion(model=REFEREE_MODEL, messages=[{"role": "system", "content": referee_prompt}], response_format={ "type": "json_object" }, temperature=0.0)
         result = json.loads(response.choices[0].message.content)
         
         if result.get('is_pure', False):
@@ -235,11 +280,11 @@ def generate_batch(category: str) -> dict:
     print(f"  -> Requesting Pair ({sub_type[:40]}...)...")
     
     try:
-        response = litellm.completion(
+        response = safe_completion(
             model=GENERATOR_MODEL, 
             messages=[{"role": "system", "content": prompt}],
             temperature=0.7,
-            response_format={ "type": "json_object" } # Forces the model to output only valid JSON
+            response_format={ "type": "json_object" } 
         )
         scenario = clean_and_parse_json(response.choices[0].message.content)
         
@@ -292,13 +337,24 @@ def main():
             with open(trap_file_path, "r") as f: current_traps = json.load(f)
         if os.path.exists(control_file_path):
             with open(control_file_path, "r") as f: current_controls = json.load(f)
+        
+        #consecutive_failures = 0
+
+        while True:
+            current_count = len([t for t in current_traps if t.get('category') == category])
+            if current_count >= TARGET_COUNT_PER_TRAP:
+                break
             
-        while len(current_traps) < TARGET_COUNT_PER_TRAP:
             paired_scenario = generate_batch(category)
             if not paired_scenario:
+                #consecutive_failures += 1
+                #if consecutive_failures >= 15:
+                #    print(f"\n[!!!] FATAL: Failed 15 times in a row. Stopping to protect API credits.")
+                #    return
                 time.sleep(5)
                 continue
-                
+            
+            #consecutive_failures = 0
             unique_timestamp = int(time.time()*1000)
             base_id = paired_scenario["scenario_id_base"]
             
