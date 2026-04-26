@@ -28,7 +28,12 @@ class ModelConfig:
 MODELS = {
     "openrouter-claude-opus": ModelConfig("openrouter/anthropic/claude-opus-4-5", "openrouter", "OPENROUTER_API_KEY"),
     "openrouter-claude-sonnet": ModelConfig("openrouter/anthropic/claude-sonnet-4", "openrouter", "OPENROUTER_API_KEY"),
-    "azure-gpt4o":    ModelConfig("azure/gpt-4o-deployment", "azure", "AZURE_API_KEY"),
+    "openrouter-gpt4o": ModelConfig("openrouter/openai/gpt-4o", "openrouter", "OPENROUTER_API_KEY"),
+    "openrouter-llama-3.3-70b-instruct": ModelConfig("openrouter/meta-llama/llama-3.3-70b-instruct", "openrouter", "OPENROUTER_API_KEY"),
+    "openrouter-gemma-4-31b-it-free": ModelConfig("openrouter/google/gemma-4-31b-it:free", "openrouter", "OPENROUTER_API_KEY"),
+    "openrouter-qwen-3.5-free": ModelConfig("openrouter/qwen/qwen3-235b-a22b:free", "openrouter", "OPENROUTER_API_KEY"),
+    "openrouter-glm-5.1": ModelConfig("openrouter/z-ai/glm-5.1", "openrouter", "OPENROUTER_API_KEY"),
+    
 }
 
 @dataclass
