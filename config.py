@@ -17,12 +17,8 @@ class ModelConfig:
     api_key_env: str
 
 MODELS = {
-    "gpt-4o":         ModelConfig("gpt-4o",               "openai",    "OPENAI_API_KEY"),
-    "claude-sonnet":  ModelConfig("claude-sonnet-4-5",    "anthropic", "ANTHROPIC_API_KEY"),
-    "claude-opus":    ModelConfig("claude-opus-4-5",      "anthropic", "ANTHROPIC_API_KEY"),
-    "gemini-2.0-pro": ModelConfig("gemini/gemini-2.0-pro","google",    "GOOGLE_API_KEY"),
-    "llama-70b":      ModelConfig("ollama/llama3.3:70b",  "ollama",    ""),
-    "openrouter-claude": ModelConfig("openrouter/anthropic/claude-sonnet-4", "openrouter", "OPENROUTER_API_KEY"),
+    "openrouter-claude-opus": ModelConfig("openrouter/anthropic/claude-opus-4-5", "openrouter", "OPENROUTER_API_KEY"),
+    "openrouter-claude-sonnet": ModelConfig("openrouter/anthropic/claude-sonnet-4", "openrouter", "OPENROUTER_API_KEY"),
     "azure-gpt4o":    ModelConfig("azure/gpt-4o-deployment", "azure", "AZURE_API_KEY"),
 }
 
