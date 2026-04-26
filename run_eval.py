@@ -115,7 +115,14 @@ def main(args):
         if unknown_labels:
             print(f"  [WARN] Unknown dataset label(s): {', '.join(unknown_labels)}")
             print(f"  [INFO] Available labels: {', '.join(sorted(known_labels))}")
+        requested_labels = set(args.datasets)
+        known_labels = {entry.label for entry in CFG.datasets}
+        unknown_labels = sorted(requested_labels - known_labels)
+        if unknown_labels:
+            print(f"  [WARN] Unknown dataset label(s): {', '.join(unknown_labels)}")
+            print(f"  [INFO] Available labels: {', '.join(sorted(known_labels))}")
         for entry in CFG.datasets:
+            entry.enabled = entry.label in requested_labels
             entry.enabled = entry.label in requested_labels
     if args.dev_models:
         CFG.dev_models = args.dev_models
@@ -123,6 +130,9 @@ def main(args):
         CFG.admin_models = args.admin_models
 
     all_scenarios = load_all_scenarios()
+    if not all_scenarios:
+        print("\n[ERROR] No scenarios loaded. Check --datasets labels or data/*.json files.")
+        return
     if not all_scenarios:
         print("\n[ERROR] No scenarios loaded. Check --datasets labels or data/*.json files.")
         return
