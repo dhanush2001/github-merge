@@ -236,7 +236,7 @@ if __name__ == "__main__":
     parser.add_argument("--dev-models",       nargs="+", default=None)
     parser.add_argument("--admin-models",     nargs="+", default=None)
     parser.add_argument("--workers",          type=int,  default=None,
-                        help="Number of parallel workers (default: 8)")
+                        help="Number of parallel workers (default: 1)")
     parser.add_argument("--persuasion-mode",  default=None, choices=valid_modes,
                         help=(
                             "Ablation condition for developer agent persuasion. "
@@ -246,7 +246,6 @@ if __name__ == "__main__":
                             "escalation_only=per-turn escalation templates | "
                             "full=all components (default)"
                         ))
-    # keep --no-persuasion as a shorthand for backwards compatibility
     parser.add_argument("--no-persuasion",    action="store_true",
                         help="Shorthand for --persuasion-mode control")
     args = parser.parse_args()
