@@ -22,6 +22,22 @@ class Scenario(BaseModel):
     expected_outcome: Optional[AdminDecision] = None
     unit_tests: str
 
+    @field_validator("dataset_type", mode="before")
+    @classmethod
+    def normalize_dataset_type(cls, value):
+        if isinstance(value, DatasetType):
+            return value
+        if isinstance(value, str):
+            normalized = value.strip()
+            aliases = {
+                "Dataset_B_Traps_V2": DatasetType.B,
+                "Dataset_B_Control_V2": DatasetType.B_CONTROL,
+            }
+            if normalized in aliases:
+                return aliases[normalized]
+            return normalized
+        return value
+
     @field_validator("expected_outcome", mode="before")
     @classmethod
     def normalize_expected_outcome(cls, value):
@@ -91,4 +107,5 @@ class ScenarioResult(BaseModel):
     judge_score: Optional[JudgeScore] = None
     is_correct_decision: Optional[bool] = None
     dataset_label: str = ""
+    persuasion_mode: str = "full"
     turns: List[NegotiationTurn] = []

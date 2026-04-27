@@ -2,6 +2,7 @@ import os
 from dataclasses import dataclass, field
 from typing import List
 from pathlib import Path
+from enum import Enum
 from dotenv import load_dotenv
 import litellm
 
@@ -9,6 +10,14 @@ load_dotenv()
 
 litellm.set_verbose = False
 litellm.suppress_debug_info = True
+
+
+class PersuasionMode(str, Enum):
+    CONTROL          = "control"           # neutral facts only, no persuasion
+    RHETORIC_ONLY    = "rhetoric_only"     # persuasive framing, no trap hints, no escalation
+    HINTS_ONLY       = "hints_only"        # neutral base + adversarial trap hints only
+    ESCALATION_ONLY  = "escalation_only"   # neutral base + per-turn escalation templates only
+    FULL             = "full"              # persuasive framing + trap hints + escalation
 
 @dataclass
 class ModelConfig:
@@ -19,7 +28,12 @@ class ModelConfig:
 MODELS = {
     "openrouter-claude-opus": ModelConfig("openrouter/anthropic/claude-opus-4-5", "openrouter", "OPENROUTER_API_KEY"),
     "openrouter-claude-sonnet": ModelConfig("openrouter/anthropic/claude-sonnet-4", "openrouter", "OPENROUTER_API_KEY"),
-    "azure-gpt4o":    ModelConfig("azure/gpt-4o-deployment", "azure", "AZURE_API_KEY"),
+    "openrouter-gpt4o": ModelConfig("openrouter/openai/gpt-4o", "openrouter", "OPENROUTER_API_KEY"),
+    "openrouter-llama-3.3-70b-instruct": ModelConfig("openrouter/meta-llama/llama-3.3-70b-instruct", "openrouter", "OPENROUTER_API_KEY"),
+    "openrouter-gemma-4-31b-it": ModelConfig("openrouter/google/gemma-4-31b-it", "openrouter", "OPENROUTER_API_KEY"),
+    "openrouter-qwen-3.5": ModelConfig("openrouter/qwen/qwen3-235b-a22b", "openrouter", "OPENROUTER_API_KEY"),
+    "openrouter-glm-5.1": ModelConfig("openrouter/z-ai/glm-5.1", "openrouter", "OPENROUTER_API_KEY"),
+    
 }
 
 @dataclass
@@ -27,6 +41,24 @@ class DatasetEntry:
     path: str
     label: str
     enabled: bool = True
+
+
+def _default_datasets() -> List[DatasetEntry]:
+    """Load every JSON dataset under data/ and enable them by default."""
+    data_dir = Path("data")
+    if not data_dir.exists():
+        return []
+
+    entries: List[DatasetEntry] = []
+    for dataset_file in sorted(data_dir.glob("*.json")):
+        entries.append(
+            DatasetEntry(
+                path=str(dataset_file),
+                label=dataset_file.stem,
+                enabled=True,
+            )
+        )
+    return entries
 
 
 def _default_datasets() -> List[DatasetEntry]:
@@ -55,7 +87,12 @@ class PipelineConfig:
     persuasion_temperature: float = 0.35
     control_temperature: float = 0.1
     results_dir: str        = "results"
-    persuasion_enabled: bool = True
+    persuasion_mode: PersuasionMode = PersuasionMode.FULL
+    max_workers: int = 1
+
+    @property
+    def persuasion_enabled(self) -> bool:
+        return self.persuasion_mode != PersuasionMode.CONTROL
 
     datasets: List[DatasetEntry] = field(default_factory=_default_datasets)
 

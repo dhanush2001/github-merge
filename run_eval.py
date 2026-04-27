@@ -1,13 +1,35 @@
 import json, os, argparse
 from datetime import datetime
 from itertools import product
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import threading
 from models import Scenario, ScenarioResult, AdminDecision, DatasetType
 from pipeline.negotiation import run_negotiation
 from pipeline.judge import judge_interaction
 from pipeline.code_runner import detect_hallucinated_imports
 from evaluation.metrics import compute_all_metrics, results_to_dataframe
-from config import CFG, MODELS
+from config import CFG, MODELS, PersuasionMode
 import pandas as pd
+
+_print_lock = threading.Lock()
+
+
+def _to_json_native(value):
+    """Recursively convert numpy/pandas scalars to JSON-native Python types."""
+    if isinstance(value, dict):
+        return {k: _to_json_native(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_to_json_native(v) for v in value]
+    if isinstance(value, tuple):
+        return [_to_json_native(v) for v in value]
+
+    item = getattr(value, "item", None)
+    if callable(item):
+        try:
+            return item()
+        except Exception:
+            return value
+    return value
 
 
 def _extract_survival_rate(trace) -> float:
@@ -72,6 +94,7 @@ def run_single(scenario, dev_model, admin_model, dataset_label) -> ScenarioResul
         judge_score=judge_score,
         is_correct_decision=is_correct,
         dataset_label=dataset_label,
+        persuasion_mode=CFG.persuasion_mode.value,
         turns=trace.turns,
     )
     result.__dict__["hallucinated_imports"] = hallucinated
@@ -83,7 +106,7 @@ def run_single(scenario, dev_model, admin_model, dataset_label) -> ScenarioResul
 def main(args):
     os.makedirs(CFG.results_dir, exist_ok=True)
     run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
-    run_mode = "persuasion" if CFG.persuasion_enabled else "control"
+    run_mode = CFG.persuasion_mode.value
 
     if args.datasets:
         requested_labels = set(args.datasets)
@@ -92,7 +115,14 @@ def main(args):
         if unknown_labels:
             print(f"  [WARN] Unknown dataset label(s): {', '.join(unknown_labels)}")
             print(f"  [INFO] Available labels: {', '.join(sorted(known_labels))}")
+        requested_labels = set(args.datasets)
+        known_labels = {entry.label for entry in CFG.datasets}
+        unknown_labels = sorted(requested_labels - known_labels)
+        if unknown_labels:
+            print(f"  [WARN] Unknown dataset label(s): {', '.join(unknown_labels)}")
+            print(f"  [INFO] Available labels: {', '.join(sorted(known_labels))}")
         for entry in CFG.datasets:
+            entry.enabled = entry.label in requested_labels
             entry.enabled = entry.label in requested_labels
     if args.dev_models:
         CFG.dev_models = args.dev_models
@@ -103,23 +133,51 @@ def main(args):
     if not all_scenarios:
         print("\n[ERROR] No scenarios loaded. Check --datasets labels or data/*.json files.")
         return
+    if not all_scenarios:
+        print("\n[ERROR] No scenarios loaded. Check --datasets labels or data/*.json files.")
+        return
     pairings = list(product(CFG.dev_models, CFG.admin_models))
     if args.cross_only:
         pairings = [(d, a) for d, a in pairings if d != a]
 
+    all_tasks = [
+        (scenario, label, dev_model, admin_model)
+        for dev_model, admin_model in pairings
+        for scenario, label in all_scenarios
+    ]
+    total = len(all_tasks)
+    completed = 0
+    print(f"\n  Running {total} tasks across {len(pairings)} model pairing(s) "
+          f"with {CFG.max_workers} workers...")
+
     all_results = []
     conversation_logs = []
-    for dev_model, admin_model in pairings:
-        print(f"\n  Dev: {dev_model}  |  Admin: {admin_model}")
-        for scenario, label in all_scenarios:
-            print(f"  [{scenario.scenario_id}]", end=" ")
+
+    def _run_task(task):
+        scenario, label, dev_model, admin_model = task
+        return run_single(scenario, dev_model, admin_model, label)
+
+    with ThreadPoolExecutor(max_workers=CFG.max_workers) as executor:
+        future_to_task = {executor.submit(_run_task, task): task for task in all_tasks}
+        for future in as_completed(future_to_task):
+            scenario, label, dev_model, admin_model = future_to_task[future]
             try:
-                result = run_single(scenario, dev_model, admin_model, label)
+                result = future.result()
+                status = "✓" if result.final_decision == AdminDecision.APPROVE else "✗"
+                with _print_lock:
+                    completed += 1
+                    print(
+                        f"  [{completed}/{total}] {status} {result.scenario_id} "
+                        f"dev={dev_model} admin={admin_model} "
+                        f"Turns:{result.total_turns} Tokens:{result.total_tokens} "
+                        f"Tests:{result.unit_test_passed}"
+                    )
                 all_results.append(result)
                 conversation_logs.append(
                     {
                         "scenario_id": result.scenario_id,
                         "run_mode": run_mode,
+                        "persuasion_mode": result.persuasion_mode,
                         "dataset_label": result.dataset_label,
                         "dataset_type": str(result.dataset_type),
                         "category": result.category,
@@ -130,13 +188,11 @@ def main(args):
                         "turns": [t.model_dump() for t in result.turns],
                     }
                 )
-                status = "✓" if result.final_decision == AdminDecision.APPROVE else "✗"
-                print(
-                    f"{status} Turns:{result.total_turns} "
-                    f"Tokens:{result.total_tokens} Tests:{result.unit_test_passed}"
-                )
             except Exception as e:
-                print(f"ERROR: {e}")
+                with _print_lock:
+                    completed += 1
+                    print(f"  [{completed}/{total}] ERROR {scenario.scenario_id} "
+                          f"dev={dev_model} admin={admin_model}: {e}")
 
     out_json = f"{CFG.results_dir}/results_{run_id}.json"
     out_csv  = f"{CFG.results_dir}/results_{run_id}.csv"
@@ -164,6 +220,7 @@ def main(args):
         "persuasion_enabled": CFG.persuasion_enabled,
         "temperature": CFG.persuasion_temperature if CFG.persuasion_enabled else CFG.control_temperature,
     }
+    metrics = _to_json_native(metrics)
     with open(f"{CFG.results_dir}/metrics_{run_id}.json", "w") as f:
         json.dump(metrics, f, indent=2)
 
@@ -172,15 +229,34 @@ def main(args):
 
 
 if __name__ == "__main__":
+    valid_modes = [m.value for m in PersuasionMode]
     parser = argparse.ArgumentParser()
-    parser.add_argument("--cross-only",    action="store_true")
-    parser.add_argument("--datasets",      nargs="+", default=None)
-    parser.add_argument("--dev-models",    nargs="+", default=None)
-    parser.add_argument("--admin-models",  nargs="+", default=None)
-    parser.add_argument("--no-persuasion", action="store_true", help="Run the control condition with no persuasion tactics")
+    parser.add_argument("--cross-only",       action="store_true")
+    parser.add_argument("--datasets",         nargs="+", default=None)
+    parser.add_argument("--dev-models",       nargs="+", default=None)
+    parser.add_argument("--admin-models",     nargs="+", default=None)
+    parser.add_argument("--workers",          type=int,  default=None,
+                        help="Number of parallel workers (default: 1)")
+    parser.add_argument("--persuasion-mode",  default=None, choices=valid_modes,
+                        help=(
+                            "Ablation condition for developer agent persuasion. "
+                            "control=neutral facts only | "
+                            "rhetoric_only=persuasive framing | "
+                            "hints_only=adversarial trap hints | "
+                            "escalation_only=per-turn escalation templates | "
+                            "full=all components (default)"
+                        ))
+    parser.add_argument("--no-persuasion",    action="store_true",
+                        help="Shorthand for --persuasion-mode control")
     args = parser.parse_args()
+
     if args.no_persuasion:
-        CFG.persuasion_enabled = False
-        print("\n[!] RUNNING IN CONTROL MODE: Persuasion tactics DISABLED.\n")
-        
+        CFG.persuasion_mode = PersuasionMode.CONTROL
+    elif args.persuasion_mode:
+        CFG.persuasion_mode = PersuasionMode(args.persuasion_mode)
+
+    if args.workers:
+        CFG.max_workers = args.workers
+
+    print(f"\n[INFO] Persuasion mode: {CFG.persuasion_mode.value}\n")
     main(args)

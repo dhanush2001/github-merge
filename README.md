@@ -56,11 +56,13 @@ Model keys are defined in `config.py` under `MODELS`.
 
 Available model keys in this repo:
 
-- `gpt-4o`
-- `claude-sonnet`
-- `claude-opus`
-- `gemini-2.0-pro`
-- `llama-70b`
+- `openrouter-claude-opus`
+- `openrouter-claude-sonnet`
+- `openrouter-llama-3.3-70b-instruct`
+- `openrouter-gemma-4-31b-it`
+- `openrouter-qwen-3.5`
+- `openrouter-glm-5.1`
+- `azure-gpt4o`
 
 Set environment variables for the providers you will run:
 
