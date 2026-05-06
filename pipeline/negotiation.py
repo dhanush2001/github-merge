@@ -16,46 +16,51 @@ def run_negotiation(scenario: Scenario, dev_model: str, admin_model: str) -> Neg
     timed_out = False
     decision = None
 
-    # Trackers for new token/char counts
     total_dev_chars = 0
-    total_dev_tokens = 0
+    total_dev_input_tokens = 0
+    total_dev_output_tokens = 0
     total_admin_chars = 0
-    total_admin_tokens = 0
+    total_admin_input_tokens = 0
+    total_admin_output_tokens = 0
 
     for turn_num in range(1, CFG.max_turns + 1):
         # Step 1: Developer argues
-        dev_argument, dev_chars, dev_tokens, dev_history = call_developer(
-            scenario=scenario, 
-            model_key=dev_model, 
-            conversation_history=dev_history, 
+        dev_argument, dev_chars, dev_in_tok, dev_out_tok, dev_history = call_developer(
+            scenario=scenario,
+            model_key=dev_model,
+            conversation_history=dev_history,
             admin_feedback=admin_feedback,
             turn=turn_num
         )
-        
+
         total_dev_chars += dev_chars
-        total_dev_tokens += dev_tokens
+        total_dev_input_tokens += dev_in_tok
+        total_dev_output_tokens += dev_out_tok
 
         # Step 2: Admin reviews
-        decision, merged_code, admin_feedback, confidence, admin_chars, admin_tokens, admin_history = call_admin(
-            scenario=scenario, 
-            model_key=admin_model, 
-            dev_argument=dev_argument, 
+        decision, merged_code, admin_feedback, confidence, admin_chars, admin_in_tok, admin_out_tok, admin_history = call_admin(
+            scenario=scenario,
+            model_key=admin_model,
+            dev_argument=dev_argument,
             turn=turn_num,
             conversation_history=admin_history
         )
-        
+
         total_admin_chars += admin_chars
-        total_admin_tokens += admin_tokens
+        total_admin_input_tokens += admin_in_tok
+        total_admin_output_tokens += admin_out_tok
 
         turn = NegotiationTurn(
             turn=turn_num,
             dev_argument=dev_argument,
             dev_char_count=dev_chars,
-            dev_token_count=dev_tokens,
+            dev_input_tokens=dev_in_tok,
+            dev_output_tokens=dev_out_tok,
             admin_decision=decision,
             admin_feedback=admin_feedback,
             admin_char_count=admin_chars,
-            admin_token_count=admin_tokens,
+            admin_input_tokens=admin_in_tok,
+            admin_output_tokens=admin_out_tok,
         )             
         turns.append(turn)
 
@@ -90,10 +95,16 @@ def run_negotiation(scenario: Scenario, dev_model: str, admin_model: str) -> Neg
         final_decision=decision,
         final_merged_code=final_merged_code,
         total_dev_chars=sum(t.dev_char_count for t in turns),
-        total_dev_tokens=sum(t.dev_token_count for t in turns),
+        total_dev_input_tokens=sum(t.dev_input_tokens for t in turns),
+        total_dev_output_tokens=sum(t.dev_output_tokens for t in turns),
         total_admin_chars=sum(t.admin_char_count for t in turns),
-        total_admin_tokens=sum(t.admin_token_count for t in turns),
-        total_tokens=sum(t.dev_token_count + t.admin_token_count for t in turns),
+        total_admin_input_tokens=sum(t.admin_input_tokens for t in turns),
+        total_admin_output_tokens=sum(t.admin_output_tokens for t in turns),
+        total_tokens=sum(
+            t.dev_input_tokens + t.dev_output_tokens +
+            t.admin_input_tokens + t.admin_output_tokens
+            for t in turns
+        ),
         total_turns=len(turns),
         timed_out=timed_out,
     )

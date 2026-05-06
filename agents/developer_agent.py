@@ -203,10 +203,10 @@ def call_developer(
 
     argument = _extract_text(response)
     char_count = len(argument)
-    token_count = _count_text_tokens(model_cfg.name, argument)
+    input_tokens, output_tokens = _extract_usage(response, model_cfg.name, argument)
 
     if turn is None:
-        return argument, char_count, token_count
+        return argument, char_count, input_tokens, output_tokens
 
     updated_history = history + [{"role": "assistant", "content": argument}]
-    return argument, char_count, token_count, updated_history
+    return argument, char_count, input_tokens, output_tokens, updated_history

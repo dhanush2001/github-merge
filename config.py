@@ -27,24 +27,21 @@ class ModelConfig:
     provider_routing: list = field(default_factory=list)
 
 MODELS = {
-    "gpt-4.1": ModelConfig(
-        "openrouter/openai/gpt-4.1", "openrouter", "OPENROUTER_API_KEY"
-    ),
-    "claude-sonnet-4": ModelConfig(
-        "openrouter/anthropic/claude-sonnet-4", "openrouter", "OPENROUTER_API_KEY"
-    ),
-    "gemini-2.5-flash": ModelConfig(
-        "openrouter/google/gemini-2.5-flash", "openrouter", "OPENROUTER_API_KEY"
+    "gemma-4-31b": ModelConfig(
+        "openrouter/google/gemma-4-31B-it", "openrouter", "OPENROUTER_API_KEY"
     ),
     "llama-3.3-70b": ModelConfig(
         "openrouter/meta-llama/llama-3.3-70b-instruct", "openrouter", "OPENROUTER_API_KEY"
     ),
-    "deepseek-v3.2": ModelConfig(
-        "openrouter/deepseek/deepseek-v3.2", "openrouter", "OPENROUTER_API_KEY"
+    "gpt-4.1-mini": ModelConfig(
+        "openrouter/openai/gpt-4.1-mini", "openrouter", "OPENROUTER_API_KEY"
     ),
     "qwen3-32b": ModelConfig(
         "openrouter/qwen/qwen3-32b", "openrouter", "OPENROUTER_API_KEY",
         provider_routing=["Together"]
+    ),
+    "deepseek-v3.2": ModelConfig(
+        "openrouter/deepseek/deepseek-v3.2", "openrouter", "OPENROUTER_API_KEY"
     ),
 }
 
@@ -69,7 +66,7 @@ class PipelineConfig:
     dev_models: List[str]   = field(default_factory=lambda: list(MODELS.keys()))
     admin_models: List[str] = field(default_factory=lambda: list(MODELS.keys()))
     max_turns: int          = 10
-    judge_model: str        = "gpt-4.1"
+    judge_model: str        = "gpt-4.1-mini"
     persuasion_temperature: float = 0.35
     control_temperature: float = 0.1
     results_dir: str        = "results"

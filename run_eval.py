@@ -1,4 +1,4 @@
-import json, os, argparse
+import json, os, argparse, time
 from datetime import datetime
 from itertools import product
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -9,9 +9,29 @@ from pipeline.judge import judge_interaction
 from pipeline.code_runner import detect_hallucinated_imports
 from evaluation.metrics import compute_all_metrics, results_to_dataframe
 from config import CFG, MODELS, PersuasionMode
+from checkpoint import CheckpointManager, TokenLimitReached, RateLimitReached
+import litellm
 import pandas as pd
 
 _print_lock = threading.Lock()
+
+MAX_RETRIES = 3
+# Backoff in seconds for each retry attempt (30s, 60s, 120s)
+_RETRY_BACKOFF = [30, 60, 120]
+
+_RETRYABLE_ERRORS = (
+    TokenLimitReached,
+    RateLimitReached,
+    litellm.exceptions.RateLimitError,
+)
+
+_MAJOR_ERRORS = (
+    litellm.exceptions.AuthenticationError,
+    litellm.exceptions.NotFoundError,
+    litellm.exceptions.BadRequestError,
+    litellm.exceptions.APIConnectionError,
+    litellm.exceptions.APIError,
+)
 
 
 def _to_json_native(value):
@@ -83,10 +103,12 @@ def run_single(scenario, dev_model, admin_model, dataset_label) -> ScenarioResul
         expected_outcome=scenario.expected_outcome,
         total_turns=trace.total_turns,
         total_dev_chars=trace.total_dev_chars,
-        total_dev_tokens=getattr(trace, "total_dev_tokens", 0),
-        total_admin_chars=getattr(trace, "total_admin_chars", 0),
-        total_admin_tokens=getattr(trace, "total_admin_tokens", 0),
-        total_tokens=getattr(trace, "total_tokens", 0),
+        total_dev_input_tokens=trace.total_dev_input_tokens,
+        total_dev_output_tokens=trace.total_dev_output_tokens,
+        total_admin_chars=trace.total_admin_chars,
+        total_admin_input_tokens=trace.total_admin_input_tokens,
+        total_admin_output_tokens=trace.total_admin_output_tokens,
+        total_tokens=trace.total_tokens,
         timed_out=trace.timed_out,
         unit_test_passed=getattr(trace, "_unit_test_passed", False),
         unit_test_output=getattr(trace, "_unit_test_output", ""),
@@ -105,8 +127,9 @@ def run_single(scenario, dev_model, admin_model, dataset_label) -> ScenarioResul
 
 def main(args):
     os.makedirs(CFG.results_dir, exist_ok=True)
-    run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+    run_id = getattr(args, "_resume_run_id", None) or datetime.now().strftime("%Y%m%d_%H%M%S")
     run_mode = CFG.persuasion_mode.value
+    ckpt = CheckpointManager(CFG.results_dir, run_id)
 
     if args.datasets:
         requested_labels = set(args.datasets)
@@ -155,7 +178,24 @@ def main(args):
 
     def _run_task(task):
         scenario, label, dev_model, admin_model = task
-        return run_single(scenario, dev_model, admin_model, label)
+        if ckpt.is_completed(scenario.scenario_id, dev_model, admin_model):
+            return None  # already done in a previous run
+
+        last_err = None
+        for attempt in range(MAX_RETRIES):
+            try:
+                return run_single(scenario, dev_model, admin_model, label)
+            except _RETRYABLE_ERRORS as e:
+                last_err = e
+                wait = _RETRY_BACKOFF[min(attempt, len(_RETRY_BACKOFF) - 1)]
+                with _print_lock:
+                    print(f"  [RETRY {attempt + 1}/{MAX_RETRIES}] {scenario.scenario_id} "
+                          f"dev={dev_model} admin={admin_model} — {type(e).__name__}, "
+                          f"waiting {wait}s...")
+                time.sleep(wait)
+
+        # All retries exhausted — raise so the caller skips without checkpointing
+        raise last_err
 
     with ThreadPoolExecutor(max_workers=CFG.max_workers) as executor:
         future_to_task = {executor.submit(_run_task, task): task for task in all_tasks}
@@ -163,6 +203,11 @@ def main(args):
             scenario, label, dev_model, admin_model = future_to_task[future]
             try:
                 result = future.result()
+                if result is None:
+                    # Skipped — already completed in prior run
+                    with _print_lock:
+                        completed += 1
+                    continue
                 status = "✓" if result.final_decision == AdminDecision.APPROVE else "✗"
                 with _print_lock:
                     completed += 1
@@ -172,6 +217,10 @@ def main(args):
                         f"Turns:{result.total_turns} Tokens:{result.total_tokens} "
                         f"Tests:{result.unit_test_passed}"
                     )
+                ckpt.mark_completed(
+                    scenario.scenario_id, dev_model, admin_model,
+                    result.model_dump(exclude={"turns"}, mode="json"),
+                )
                 all_results.append(result)
                 conversation_logs.append(
                     {
@@ -188,11 +237,20 @@ def main(args):
                         "turns": [t.model_dump() for t in result.turns],
                     }
                 )
+            except (*_RETRYABLE_ERRORS, *_MAJOR_ERRORS) as e:
+                # Rate/token limit (retries exhausted) or major API error — never checkpoint
+                with _print_lock:
+                    completed += 1
+                    print(f"  [{completed}/{total}] SKIPPED (not checkpointed) "
+                          f"{scenario.scenario_id} dev={dev_model} admin={admin_model}: "
+                          f"{type(e).__name__}: {e}")
             except Exception as e:
+                # Unexpected error — checkpoint so it's visible but doesn't block the run
                 with _print_lock:
                     completed += 1
                     print(f"  [{completed}/{total}] ERROR {scenario.scenario_id} "
                           f"dev={dev_model} admin={admin_model}: {e}")
+                ckpt.mark_error(scenario.scenario_id, dev_model, admin_model, str(e))
 
     out_json = f"{CFG.results_dir}/results_{run_id}.json"
     out_csv  = f"{CFG.results_dir}/results_{run_id}.csv"
