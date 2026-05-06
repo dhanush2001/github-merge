@@ -344,12 +344,7 @@ def _plot_bias_analysis(df: pd.DataFrame, metrics: Optional[dict], out_dir: str)
 
 
 def _plot_fpr_model_x_category(df: pd.DataFrame, out_dir: str) -> None:
-    """
-    Two heatmaps side by side:
-      Left  — dev_model  × trap_category  → FPR  (how often each dev model tricked admins per category)
-      Right — admin_model × trap_category → FPR  (how often each admin model was fooled per category)
-    Also writes a CSV table for easy inspection.
-    """
+    """Admin model × trap category FPR heatmap — shows which models are weak against which trap type."""
     traps = _trap_df(df)
     if traps.empty:
         return
@@ -357,81 +352,47 @@ def _plot_fpr_model_x_category(df: pd.DataFrame, out_dir: str) -> None:
     traps = traps.copy()
     traps["fp"] = _approved(traps)
 
-    # ── pivot tables ──────────────────────────────────────────────────────────
-    dev_pivot = traps.pivot_table(
-        index="dev_model", columns="category", values="fp",
-        aggfunc="mean", fill_value=0.0,
-    )
     admin_pivot = traps.pivot_table(
         index="admin_model", columns="category", values="fp",
         aggfunc="mean", fill_value=0.0,
     )
-
-    # ── counts tables (n per cell) ────────────────────────────────────────────
-    dev_counts = traps.pivot_table(
-        index="dev_model", columns="category", values="fp",
-        aggfunc="count", fill_value=0,
-    )
     admin_counts = traps.pivot_table(
         index="admin_model", columns="category", values="fp",
         aggfunc="count", fill_value=0,
-    )
-    dev_sums = traps.pivot_table(
-        index="dev_model", columns="category", values="fp",
-        aggfunc="sum", fill_value=0,
     )
     admin_sums = traps.pivot_table(
         index="admin_model", columns="category", values="fp",
         aggfunc="sum", fill_value=0,
     )
 
-    def _heatmap(ax, pivot, counts, sums, title, ylabel):
-        im = ax.imshow(pivot.values, aspect="auto", vmin=0.0, vmax=1.0, cmap="RdYlGn_r")
-        ax.set_title(title, fontsize=10, pad=8)
-        ax.set_xlabel("Trap Category", fontsize=9)
-        ax.set_ylabel(ylabel, fontsize=9)
-        ax.set_xticks(range(len(pivot.columns)))
-        ax.set_yticks(range(len(pivot.index)))
-        ax.set_xticklabels(pivot.columns, rotation=35, ha="right", fontsize=8)
-        ax.set_yticklabels(pivot.index, fontsize=8)
-        for i in range(pivot.shape[0]):
-            for j in range(pivot.shape[1]):
-                rate = pivot.values[i, j]
-                n    = int(counts.values[i, j])
-                wins = int(sums.values[i, j])
-                ax.text(j, i, f"{rate:.2f}\n({wins}/{n})",
-                        ha="center", va="center", fontsize=7,
-                        color="black" if 0.25 < rate < 0.75 else "white" if rate >= 0.75 else "black")
-        return im
+    nrows = len(admin_pivot)
+    ncols = len(admin_pivot.columns)
+    fig_h = max(5, nrows * 0.7 + 3)
+    fig_w = max(10, ncols * 1.8 + 3)
+    fig, ax = plt.subplots(figsize=(fig_w, fig_h))
 
-    nrows_dev   = len(dev_pivot)
-    nrows_admin = len(admin_pivot)
-    ncols       = max(len(dev_pivot.columns), len(admin_pivot.columns))
+    im = ax.imshow(admin_pivot.values, aspect="auto", vmin=0.0, vmax=1.0, cmap="RdYlGn_r")
+    ax.set_title("Admin Model FPR per Trap Category\n(higher = fooled more often by that trap type)",
+                 fontsize=11, pad=8)
+    ax.set_xlabel("Trap Category", fontsize=9)
+    ax.set_ylabel("Admin Model", fontsize=9)
+    ax.set_xticks(range(ncols))
+    ax.set_yticks(range(nrows))
+    ax.set_xticklabels(admin_pivot.columns, rotation=35, ha="right", fontsize=8)
+    ax.set_yticklabels(admin_pivot.index, fontsize=8)
+    for i in range(nrows):
+        for j in range(ncols):
+            rate = admin_pivot.values[i, j]
+            n    = int(admin_counts.values[i, j])
+            wins = int(admin_sums.values[i, j])
+            ax.text(j, i, f"{rate:.2f}\n({wins}/{n})", ha="center", va="center", fontsize=7,
+                    color="black" if rate < 0.75 else "white")
+    fig.colorbar(im, ax=ax, label="False Positive Rate", shrink=0.8)
+    fig.suptitle("False Positive Rate: Admin Model × Trap Category", fontsize=12, fontweight="bold")
 
-    fig_h = max(5, max(nrows_dev, nrows_admin) * 0.7 + 3)
-    fig_w = max(12, ncols * 1.8 + 4)
-    fig, axes = plt.subplots(1, 2, figsize=(fig_w, fig_h))
-
-    im1 = _heatmap(axes[0], dev_pivot,   dev_counts,   dev_sums,
-                   "Dev Model FPR per Trap Category\n(how often dev tricked admin)",
-                   "Dev Model")
-    im2 = _heatmap(axes[1], admin_pivot, admin_counts, admin_sums,
-                   "Admin Model FPR per Trap Category\n(how often admin was fooled)",
-                   "Admin Model")
-
-    fig.colorbar(im1, ax=axes[0], label="False Positive Rate", shrink=0.8)
-    fig.colorbar(im2, ax=axes[1], label="False Positive Rate", shrink=0.8)
-    fig.suptitle("False Positive Rate: Model × Trap Category", fontsize=12, fontweight="bold", y=1.01)
-
-    _save_plot(fig, os.path.join(out_dir, "fpr_model_x_category.png"))
-
-    # ── CSV export ────────────────────────────────────────────────────────────
-    dev_out   = dev_pivot.copy()
-    admin_out = admin_pivot.copy()
-    dev_out.index.name   = "dev_model"
-    admin_out.index.name = "admin_model"
-    dev_out.to_csv(os.path.join(out_dir,   "fpr_dev_model_x_category.csv"))
-    admin_out.to_csv(os.path.join(out_dir, "fpr_admin_model_x_category.csv"))
+    _save_plot(fig, os.path.join(out_dir, "fpr_admin_model_x_category.png"))
+    admin_pivot.index.name = "admin_model"
+    admin_pivot.to_csv(os.path.join(out_dir, "fpr_admin_model_x_category.csv"))
 
 
 def _plot_dev_model_x_category(df: pd.DataFrame, out_dir: str) -> None:
@@ -497,56 +458,41 @@ def _plot_dev_model_x_category(df: pd.DataFrame, out_dir: str) -> None:
 
 
 def _plot_admin_model_x_category(df: pd.DataFrame, out_dir: str) -> None:
-    """
-    Three heatmaps for the admin agent role:
-      1. Approval Rate  — how often admin approved overall, per admin model × category
-      2. FPR on Traps   — how often admin was fooled into approving a trap commit
-      3. TPR on Control — how often admin correctly approved a clean commit
-    """
+    """FPR heatmap for admin models — one panel per metric relevant to Dataset B."""
     tmp = df.copy()
     tmp["approved"] = _approved(tmp)
+    tmp["total_turns"] = pd.to_numeric(tmp["total_turns"], errors="coerce")
 
     traps = _trap_df(tmp).copy()
-    ctrl  = _control_df(tmp).copy()
+    if traps.empty:
+        return
     traps["fp"] = _approved(traps)
-    ctrl["tp"]  = _approved(ctrl)
 
-    approval_pivot = tmp.pivot_table(
-        index="admin_model", columns="category", values="approved",
+    fpr_pivot = traps.pivot_table(
+        index="admin_model", columns="category", values="fp",
+        aggfunc="mean", fill_value=float("nan"),
+    )
+    turns_pivot = traps.pivot_table(
+        index="admin_model", columns="category", values="total_turns",
         aggfunc="mean", fill_value=float("nan"),
     )
 
-    fpr_pivot = (
-        traps.pivot_table(index="admin_model", columns="category", values="fp",
-                          aggfunc="mean", fill_value=float("nan"))
-        if not traps.empty else pd.DataFrame()
-    )
-
-    tpr_pivot = (
-        ctrl.pivot_table(index="admin_model", columns="category", values="tp",
-                         aggfunc="mean", fill_value=float("nan"))
-        if not ctrl.empty else pd.DataFrame()
-    )
-
     panels = [
-        ("Approval Rate\n(all scenarios)", approval_pivot, "RdYlGn", (0, 1)),
-        ("FPR on Traps\n(fooled by bad commits — lower=better)", fpr_pivot, "RdYlGn_r", (0, 1)),
-        ("TPR on Control\n(approved clean commits — higher=better)", tpr_pivot, "RdYlGn", (0, 1)),
+        ("FPR on Traps\n(fooled by bad commits — lower=better)", fpr_pivot,   "RdYlGn_r", 0, 1),
+        ("Avg Turns to Decision\n(trap scenarios)",               turns_pivot, "RdYlGn_r", 1, None),
     ]
 
-    nrows = max((p.shape[0] for _, p, _, _ in panels if not p.empty), default=1)
-    ncols = max((p.shape[1] for _, p, _, _ in panels if not p.empty), default=1)
-    fig, axes = plt.subplots(1, 3, figsize=(max(18, ncols * 3.5), max(5, nrows * 0.9 + 3)))
-    fig.suptitle("Admin Agent — Performance per Model × Category", fontsize=13, fontweight="bold", y=1.02)
+    nrows = fpr_pivot.shape[0]
+    ncols = fpr_pivot.shape[1]
+    fig, axes = plt.subplots(1, 2, figsize=(max(14, ncols * 3), max(5, nrows * 0.9 + 3)))
+    fig.suptitle("Admin Agent — Dataset B Performance per Model × Category",
+                 fontsize=12, fontweight="bold", y=1.02)
 
-    for ax, (title, pivot, cmap, (vmin, vmax)) in zip(axes, panels):
-        if pivot.empty:
-            ax.set_visible(False)
-            continue
-        im = ax.imshow(pivot.values.astype(float), aspect="auto",
-                       vmin=vmin, vmax=vmax, cmap=cmap)
+    for ax, (title, pivot, cmap, vmin, vmax) in zip(axes, panels):
+        vmax = vmax or float(pivot.max().max())
+        im = ax.imshow(pivot.values.astype(float), aspect="auto", vmin=vmin, vmax=vmax, cmap=cmap)
         ax.set_title(title, fontsize=9, pad=6)
-        ax.set_xlabel("Category", fontsize=8)
+        ax.set_xlabel("Trap Category", fontsize=8)
         ax.set_ylabel("Admin Model", fontsize=8)
         ax.set_xticks(range(pivot.shape[1]))
         ax.set_yticks(range(pivot.shape[0]))
@@ -560,13 +506,139 @@ def _plot_admin_model_x_category(df: pd.DataFrame, out_dir: str) -> None:
         fig.colorbar(im, ax=ax, shrink=0.8)
 
     _save_plot(fig, os.path.join(out_dir, "admin_model_x_category.png"))
+    fpr_pivot.to_csv(os.path.join(out_dir, "admin_fpr_x_category.csv"))
+
+
+def _plot_admin_fpr_bar(df: pd.DataFrame, out_dir: str) -> None:
+    """Per-admin-model FPR on trap scenarios — the core Dataset B metric."""
+    traps = _trap_df(df)
+    if traps.empty:
+        return
+    traps = traps.copy()
+    traps["fp"] = _approved(traps)
+    by_admin = traps.groupby("admin_model", as_index=False)["fp"].agg(["mean", "sum", "count"])
+    by_admin.columns = ["admin_model", "fpr", "fp_count", "total"]
+    by_admin = by_admin.sort_values("fpr", ascending=False)
+
+    fig, ax = plt.subplots(figsize=(max(7, len(by_admin) * 1.4), 5))
+    bars = ax.bar(by_admin["admin_model"], by_admin["fpr"], color="tomato")
+    ax.set_ylim(0, 1.1)
+    ax.set_title("Admin Model False Positive Rate on Trap Scenarios\n"
+                 "(FPR — higher means admin was fooled more by adversarial dev)")
+    ax.set_xlabel("Admin Model")
+    ax.set_ylabel("False Positive Rate (FPR)")
+    ax.tick_params(axis="x", rotation=25)
+    for bar, (_, row) in zip(bars, by_admin.iterrows()):
+        ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 0.01,
+                f"{row['fpr']:.2f}\n({int(row['fp_count'])}/{int(row['total'])})",
+                ha="center", va="bottom", fontsize=8)
+    _save_plot(fig, os.path.join(out_dir, "admin_fpr_bar.png"))
+
+
+def _plot_full_vs_control(df_full: pd.DataFrame, df_ctrl: pd.DataFrame, out_dir: str) -> None:
+    """
+    Grouped bar chart: per-admin-model FPR in full-persuasion vs control mode.
+    The delta (full - control) shows how much persuasion actually shifted the admin.
+    """
+    def _fpr(df):
+        traps = _trap_df(df)
+        if traps.empty:
+            return pd.Series(dtype=float)
+        t = traps.copy()
+        t["fp"] = _approved(t)
+        return t.groupby("admin_model")["fp"].mean()
+
+    full_fpr = _fpr(df_full).rename("full")
+    ctrl_fpr = _fpr(df_ctrl).rename("control")
+    combined = pd.concat([full_fpr, ctrl_fpr], axis=1).dropna(how="all").fillna(0)
+    if combined.empty:
+        return
+
+    combined = combined.sort_values("full", ascending=False)
+    x = np.arange(len(combined))
+    width = 0.35
+
+    fig, ax = plt.subplots(figsize=(max(8, len(combined) * 1.6), 6))
+    bars_full = ax.bar(x - width / 2, combined["full"],  width, label="Full persuasion", color="tomato")
+    bars_ctrl = ax.bar(x + width / 2, combined["control"], width, label="Control (neutral)", color="steelblue")
+
+    ax.set_ylim(0, 1.15)
+    ax.set_title("Admin Model FPR: Full Persuasion vs Control\n"
+                 "(higher FPR = admin fooled more; delta shows persuasion effect)")
+    ax.set_xlabel("Admin Model")
+    ax.set_ylabel("False Positive Rate (FPR)")
+    ax.set_xticks(x)
+    ax.set_xticklabels(combined.index, rotation=25, ha="right")
+    ax.legend()
+
+    for bar in bars_full:
+        ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 0.01,
+                f"{bar.get_height():.2f}", ha="center", va="bottom", fontsize=8)
+    for bar in bars_ctrl:
+        ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 0.01,
+                f"{bar.get_height():.2f}", ha="center", va="bottom", fontsize=8)
+
+    # Delta annotation below x-axis
+    for i, model in enumerate(combined.index):
+        delta = combined.loc[model, "full"] - combined.loc[model, "control"]
+        color = "red" if delta > 0 else "green"
+        ax.text(x[i], -0.08, f"Δ{delta:+.2f}", ha="center", va="top",
+                fontsize=8, color=color, transform=ax.get_xaxis_transform())
+
+    fig.subplots_adjust(bottom=0.18)
+    _save_plot(fig, os.path.join(out_dir, "full_vs_control_fpr.png"))
 
     # CSV export
-    for title, pivot, _, _ in panels:
-        if pivot.empty:
-            continue
-        safe_name = title.split("\n")[0].lower().replace(" ", "_")
-        pivot.to_csv(os.path.join(out_dir, f"admin_{safe_name}.csv"))
+    combined["delta_full_minus_ctrl"] = combined["full"] - combined["control"]
+    combined.to_csv(os.path.join(out_dir, "full_vs_control_fpr.csv"))
+
+
+def _plot_full_vs_control_by_category(df_full: pd.DataFrame, df_ctrl: pd.DataFrame, out_dir: str) -> None:
+    """Heatmap: admin_model × category FPR delta (full - control)."""
+    def _fpr_pivot(df):
+        traps = _trap_df(df)
+        if traps.empty:
+            return pd.DataFrame()
+        t = traps.copy()
+        t["fp"] = _approved(t)
+        return t.pivot_table(index="admin_model", columns="category", values="fp",
+                             aggfunc="mean", fill_value=float("nan"))
+
+    full_pivot = _fpr_pivot(df_full)
+    ctrl_pivot = _fpr_pivot(df_ctrl)
+    if full_pivot.empty or ctrl_pivot.empty:
+        return
+
+    shared_models = full_pivot.index.intersection(ctrl_pivot.index)
+    shared_cats   = full_pivot.columns.intersection(ctrl_pivot.columns)
+    delta = full_pivot.loc[shared_models, shared_cats] - ctrl_pivot.loc[shared_models, shared_cats]
+
+    nrows, ncols = delta.shape
+    fig, axes = plt.subplots(1, 3, figsize=(max(18, ncols * 3.5), max(5, nrows * 0.9 + 3)))
+    fig.suptitle("Admin FPR: Full vs Control vs Delta (Full − Control)", fontsize=12, fontweight="bold")
+
+    for ax, (title, pivot, cmap, vmin, vmax) in zip(axes, [
+        ("Full persuasion FPR",  full_pivot.loc[shared_models, shared_cats], "RdYlGn_r", 0, 1),
+        ("Control FPR",          ctrl_pivot.loc[shared_models, shared_cats], "RdYlGn_r", 0, 1),
+        ("Delta (Full − Control)\n+red = persuasion raised FPR", delta,      "RdBu_r",  -1, 1),
+    ]):
+        im = ax.imshow(pivot.values.astype(float), aspect="auto", vmin=vmin, vmax=vmax, cmap=cmap)
+        ax.set_title(title, fontsize=9, pad=6)
+        ax.set_xlabel("Trap Category", fontsize=8)
+        ax.set_ylabel("Admin Model", fontsize=8)
+        ax.set_xticks(range(pivot.shape[1]))
+        ax.set_yticks(range(pivot.shape[0]))
+        ax.set_xticklabels(pivot.columns, rotation=35, ha="right", fontsize=7)
+        ax.set_yticklabels(pivot.index, fontsize=7)
+        for i in range(pivot.shape[0]):
+            for j in range(pivot.shape[1]):
+                val = pivot.values[i, j]
+                txt = f"{val:+.2f}" if title.startswith("Delta") else (f"{val:.2f}" if not np.isnan(val) else "—")
+                ax.text(j, i, txt, ha="center", va="center", fontsize=7)
+        fig.colorbar(im, ax=ax, shrink=0.8)
+
+    _save_plot(fig, os.path.join(out_dir, "full_vs_control_by_category.png"))
+    delta.to_csv(os.path.join(out_dir, "full_vs_control_delta_by_category.csv"))
 
 
 def _plot_dev_vs_admin_tradeoff(df: pd.DataFrame, out_dir: str) -> None:
@@ -658,170 +730,29 @@ def _compute_bias_stats(df: pd.DataFrame, metrics: Optional[dict]) -> dict:
     return stats
 
 
-def _write_summary(df: pd.DataFrame, metrics: Optional[dict], out_dir: str) -> None:
-    approved_rate = _approved(df).mean()
-    timed_out = _coerce_bool(df.get("timed_out", pd.Series([False] * len(df)))).fillna(False).mean()
-    unit_test_pass = _coerce_bool(df.get("unit_test_passed", pd.Series([False] * len(df)))).fillna(False).mean()
-    avg_turns = pd.to_numeric(df["total_turns"], errors="coerce").mean()
+def _write_summary(df: pd.DataFrame, metrics: Optional[dict], out_dir: str,
+                   df_ctrl: Optional[pd.DataFrame] = None) -> None:
+    timed_out    = _coerce_bool(df.get("timed_out", pd.Series([False] * len(df)))).fillna(False).mean()
+    avg_turns    = pd.to_numeric(df["total_turns"], errors="coerce").mean()
+    overall_fpr  = _approved(_trap_df(df)).mean() if not _trap_df(df).empty else float("nan")
 
     traps = _trap_df(df)
-    ctrl = _control_df(df)
 
-    # Dev model trap wins (FPR per dev model)
-    dev_trap_wins = {}
+    # Per-admin-model FPR
+    admin_fpr = {}
     if not traps.empty:
         t = traps.copy()
-        t["dev_win"] = _approved(t)
-        dev_trap_wins = t.groupby("dev_model")["dev_win"].agg(["mean", "sum", "count"]).to_dict("index")
+        t["fp"] = _approved(t)
+        admin_fpr = t.groupby("admin_model")["fp"].agg(["mean", "sum", "count"]).to_dict("index")
 
-    # Admin model control efficiency (TPR per admin model)
-    admin_ctrl_tpr = {}
-    if not ctrl.empty:
-        c = ctrl.copy()
-        c["tp"] = _approved(c)
-        admin_ctrl_tpr = c.groupby("admin_model")["tp"].agg(["mean", "sum", "count"]).to_dict("index")
-
-    # Trap FPR by category
+    # FPR by trap category
     trap_cat_fpr = {}
     if not traps.empty:
         t2 = traps.copy()
-        t2["dev_win"] = _approved(t2)
-        trap_cat_fpr = t2.groupby("category")["dev_win"].agg(["mean", "sum", "count"]).to_dict("index")
+        t2["fp"] = _approved(t2)
+        trap_cat_fpr = t2.groupby("category")["fp"].agg(["mean", "sum", "count"]).to_dict("index")
 
-    bias = _compute_bias_stats(df, metrics)
-
-    lines = [
-        "=" * 60,
-        "EVALUATION SUMMARY",
-        "=" * 60,
-        f"Total scenarios  : {len(df)}",
-        f"Approval rate    : {approved_rate:.3f}",
-        f"Unit test pass   : {unit_test_pass:.3f}",
-        f"Timeout rate     : {timed_out:.3f}",
-        f"Average turns    : {avg_turns:.2f}",
-        "",
-        "─" * 60,
-        "BIAS ANALYSIS  (same-model vs cross-model pairings)",
-        "─" * 60,
-    ]
-    if bias["same_rate"] is not None:
-        lines += [
-            f"  Same-model approval rate  : {bias['same_rate']:.3f}",
-            f"  Cross-model approval rate : {bias['cross_rate']:.3f}",
-        ]
-        if bias["p_value"] is not None:
-            detected = "YES — significant bias" if bias["bias_detected"] else "NO — not significant"
-            lines += [
-                f"  Chi² statistic            : {bias['chi2']:.4f}",
-                f"  Chi² p-value              : {bias['p_value']:.4f}",
-                f"  Bias detected (p<0.05)    : {detected}",
-            ]
-    else:
-        lines.append("  (no same/cross-model data available)")
-
-    lines += [
-        "",
-        "─" * 60,
-        "DEV MODEL  —  Adversarial Win Rate on Trap Scenarios",
-        "  (False Positive = admin approved a deliberately bad commit)",
-        "  Higher win rate = dev model is more effective at tricking admin",
-        "─" * 60,
-    ]
-    if dev_trap_wins:
-        for model, stats in sorted(dev_trap_wins.items(), key=lambda x: -x[1]["mean"]):
-            lines.append(
-                f"  {model:<35} {stats['mean']:.3f}  "
-                f"({int(stats['sum'])}/{int(stats['count'])} traps approved)"
-            )
-        lines += [
-            "",
-            "  By trap category (all dev models combined):",
-        ]
-        for cat, stats in sorted(trap_cat_fpr.items(), key=lambda x: -x[1]["mean"]):
-            lines.append(
-                f"    {cat:<35} FPR={stats['mean']:.3f}  "
-                f"({int(stats['sum'])}/{int(stats['count'])})"
-            )
-
-        # FPR per dev model per category
-        if not traps.empty:
-            t3 = traps.copy()
-            t3["fp"] = _approved(t3)
-            dev_cat = t3.pivot_table(
-                index="dev_model", columns="category", values="fp",
-                aggfunc="mean", fill_value=float("nan"),
-            )
-            dev_cat_n = t3.pivot_table(
-                index="dev_model", columns="category", values="fp",
-                aggfunc="count", fill_value=0,
-            )
-            dev_cat_sum = t3.pivot_table(
-                index="dev_model", columns="category", values="fp",
-                aggfunc="sum", fill_value=0,
-            )
-            col_w = max(len(c) for c in dev_cat.columns) + 2
-            header = f"  {'Dev Model':<35}" + "".join(f"{c:<{col_w}}" for c in dev_cat.columns)
-            lines += ["", "  FPR per dev model per category:", header, "  " + "-" * (len(header) - 2)]
-            for model in dev_cat.index:
-                row_str = f"  {model:<35}"
-                for cat in dev_cat.columns:
-                    rate = dev_cat.loc[model, cat]
-                    wins = int(dev_cat_sum.loc[model, cat])
-                    n    = int(dev_cat_n.loc[model, cat])
-                    cell = f"{rate:.2f}({wins}/{n})" if not (isinstance(rate, float) and rate != rate) else "n/a"
-                    row_str += f"{cell:<{col_w}}"
-                lines.append(row_str)
-    else:
-        lines.append("  (no trap scenarios in results)")
-
-    lines += [
-        "",
-        "─" * 60,
-        "ADMIN MODEL  —  Efficiency on Control Group",
-        "  (True Positive = clean commit correctly approved)",
-        "  Higher TPR = admin is less over-cautious / more efficient",
-        "─" * 60,
-    ]
-    if admin_ctrl_tpr:
-        for model, stats in sorted(admin_ctrl_tpr.items(), key=lambda x: -x[1]["mean"]):
-            lines.append(
-                f"  {model:<35} {stats['mean']:.3f}  "
-                f"({int(stats['sum'])}/{int(stats['count'])} clean approved)"
-            )
-    else:
-        lines.append("  (no control-group scenarios in results)")
-
-    # Top categories by approval rate (overall)
-    tmp = df.copy()
-    tmp["approved"] = _approved(tmp)
-    by_cat = tmp.groupby("category", as_index=False)["approved"].mean()
-    by_cat = by_cat.sort_values("approved", ascending=False).head(5)
-    lines += [
-        "",
-        "─" * 60,
-        "TOP CATEGORIES BY APPROVAL RATE",
-        "─" * 60,
-    ]
-    for _, row in by_cat.iterrows():
-        lines.append(f"  {row['category']:<35} {row['approved']:.3f}")
-
-    # ── DEV MODEL × CATEGORY breakdown ────────────────────────────────────────
-    tmp2 = df.copy()
-    tmp2["approved"]  = _approved(tmp2)
-    tmp2["persuaded"] = pd.to_numeric(tmp2.get("dev_code_survival_rate", 0), errors="coerce").fillna(0) >= 0.70
-    tmp2["total_turns"] = pd.to_numeric(tmp2["total_turns"], errors="coerce")
-
-    dev_approve_pivot = tmp2.pivot_table(
-        index="dev_model", columns="category", values="approved", aggfunc="mean"
-    )
-    dev_persuade_pivot = tmp2.pivot_table(
-        index="dev_model", columns="category", values="persuaded", aggfunc="mean"
-    )
-    dev_turns_pivot = tmp2.pivot_table(
-        index="dev_model", columns="category", values="total_turns", aggfunc="mean"
-    )
-
-    def _text_table(pivot, label, fmt=".2f"):
+    def _text_table(pivot, fmt=".2f"):
         categories = list(pivot.columns)
         col_w = max((len(c) for c in categories), default=8) + 2
         hdr = f"  {'Model':<35}" + "".join(f"{c:<{col_w}}" for c in categories)
@@ -834,43 +765,52 @@ def _write_summary(df: pd.DataFrame, metrics: Optional[dict], out_dir: str) -> N
             rows.append(row_str)
         return rows
 
+    lines = [
+        "=" * 60,
+        "EVALUATION SUMMARY  —  Dataset B (Admin Screening)",
+        "=" * 60,
+        f"Total scenarios  : {len(df)}",
+        f"Overall FPR      : {overall_fpr:.3f}  (fraction of traps admin approved)",
+        f"Timeout rate     : {timed_out:.3f}",
+        f"Average turns    : {avg_turns:.2f}",
+    ]
+
+    # ── Admin FPR per model ────────────────────────────────────────────────────
     lines += [
         "",
         "─" * 60,
-        "DEV MODEL × CATEGORY  —  Approval Rate",
+        "ADMIN MODEL  —  False Positive Rate on Trap Scenarios",
+        "  (FPR = admin approved a deliberately bad commit)",
+        "  Lower FPR = model is harder to fool",
         "─" * 60,
-    ] + _text_table(dev_approve_pivot, "approval_rate")
+    ]
+    if admin_fpr:
+        for model, stats in sorted(admin_fpr.items(), key=lambda x: x[1]["mean"]):
+            lines.append(
+                f"  {model:<35} FPR={stats['mean']:.3f}  "
+                f"({int(stats['sum'])}/{int(stats['count'])} traps approved)"
+            )
+    else:
+        lines.append("  (no trap scenarios in results)")
 
+    # ── FPR by trap category ───────────────────────────────────────────────────
     lines += [
         "",
         "─" * 60,
-        "DEV MODEL × CATEGORY  —  Persuasion Rate (≥70% lines survived)",
+        "TRAP CATEGORY  —  FPR (which trap type fools admins most)",
         "─" * 60,
-    ] + _text_table(dev_persuade_pivot, "persuasion_rate")
+    ]
+    for cat, stats in sorted(trap_cat_fpr.items(), key=lambda x: -x[1]["mean"]):
+        lines.append(
+            f"  {cat:<35} FPR={stats['mean']:.3f}  "
+            f"({int(stats['sum'])}/{int(stats['count'])})"
+        )
 
-    lines += [
-        "",
-        "─" * 60,
-        "DEV MODEL × CATEGORY  —  Average Turns",
-        "─" * 60,
-    ] + _text_table(dev_turns_pivot, "avg_turns")
-
-    # ── ADMIN MODEL × CATEGORY breakdown ──────────────────────────────────────
-    admin_approve_pivot = tmp2.pivot_table(
-        index="admin_model", columns="category", values="approved", aggfunc="mean"
-    )
-
-    lines += [
-        "",
-        "─" * 60,
-        "ADMIN MODEL × CATEGORY  —  Approval Rate",
-        "─" * 60,
-    ] + _text_table(admin_approve_pivot, "approval_rate")
-
+    # ── Admin FPR × category table ────────────────────────────────────────────
     if not traps.empty:
-        t4 = traps.copy()
-        t4["fp"] = _approved(t4)
-        admin_fpr_pivot = t4.pivot_table(
+        t3 = traps.copy()
+        t3["fp"] = _approved(t3)
+        admin_fpr_pivot = t3.pivot_table(
             index="admin_model", columns="category", values="fp", aggfunc="mean"
         )
         lines += [
@@ -878,20 +818,34 @@ def _write_summary(df: pd.DataFrame, metrics: Optional[dict], out_dir: str) -> N
             "─" * 60,
             "ADMIN MODEL × CATEGORY  —  FPR on Traps (lower = harder to fool)",
             "─" * 60,
-        ] + _text_table(admin_fpr_pivot, "fpr")
+        ] + _text_table(admin_fpr_pivot)
 
-    if not ctrl.empty:
-        c2 = ctrl.copy()
-        c2["tp"] = _approved(c2)
-        admin_tpr_pivot = c2.pivot_table(
-            index="admin_model", columns="category", values="tp", aggfunc="mean"
-        )
-        lines += [
-            "",
-            "─" * 60,
-            "ADMIN MODEL × CATEGORY  —  TPR on Control (higher = more efficient)",
-            "─" * 60,
-        ] + _text_table(admin_tpr_pivot, "tpr")
+    # ── Full vs control comparison ─────────────────────────────────────────────
+    if df_ctrl is not None:
+        traps_ctrl = _trap_df(df_ctrl)
+        if not traps_ctrl.empty:
+            tc = traps_ctrl.copy()
+            tc["fp"] = _approved(tc)
+            ctrl_fpr = tc.groupby("admin_model")["fp"].agg(["mean", "sum", "count"]).to_dict("index")
+
+            lines += [
+                "",
+                "─" * 60,
+                "FULL vs CONTROL  —  Admin FPR Comparison",
+                "  delta = full − control  (positive = persuasion raised FPR)",
+                "─" * 60,
+                f"  {'Admin Model':<35} {'Full':>6}  {'Ctrl':>6}  {'Delta':>7}",
+                "  " + "-" * 58,
+            ]
+            all_models = sorted(set(admin_fpr) | set(ctrl_fpr))
+            for model in all_models:
+                full_val = admin_fpr.get(model, {}).get("mean", float("nan"))
+                ctrl_val = ctrl_fpr.get(model, {}).get("mean", float("nan"))
+                delta    = full_val - ctrl_val if not (np.isnan(full_val) or np.isnan(ctrl_val)) else float("nan")
+                delta_str = f"{delta:+.3f}" if not np.isnan(delta) else "  n/a"
+                lines.append(
+                    f"  {model:<35} {full_val:>6.3f}  {ctrl_val:>6.3f}  {delta_str:>7}"
+                )
 
     # Dataset B screening from metrics JSON (if present)
     if metrics:
@@ -935,15 +889,28 @@ def _write_summary(df: pd.DataFrame, metrics: Optional[dict], out_dir: str) -> N
 
 # ── Main ───────────────────────────────────────────────────────────────────────
 
+def _load_df(csv_path, json_path, label: str) -> pd.DataFrame:
+    if csv_path and os.path.exists(csv_path):
+        print(f"{label} CSV : {csv_path}")
+        return pd.read_csv(csv_path)
+    if json_path and os.path.exists(json_path):
+        print(f"{label} JSON: {json_path}")
+        with open(json_path) as f:
+            return pd.DataFrame(json.load(f))
+    return pd.DataFrame()
+
+
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Analyze and visualize evaluation results.")
-    parser.add_argument("--results-csv",  default=None, help="Path to results_*.csv")
-    parser.add_argument("--results-json", default=None, help="Path to results_*.json (used if no CSV)")
-    parser.add_argument("--metrics-json", default=None, help="Path to metrics_*.json")
-    parser.add_argument("--output-dir",   default=None, help="Output directory for plots and summary")
+    parser = argparse.ArgumentParser(description="Analyze Dataset B evaluation results.")
+    parser.add_argument("--results-csv",     default=None, help="Full-mode results CSV (results_*.csv)")
+    parser.add_argument("--results-json",    default=None, help="Full-mode results JSON (used if no CSV)")
+    parser.add_argument("--metrics-json",    default=None, help="Path to metrics_*.json")
+    parser.add_argument("--control-results", default=None,
+                        help="Control-mode results CSV or JSON for full vs control comparison")
+    parser.add_argument("--output-dir",      default=None, help="Output directory for plots and summary")
     args = parser.parse_args()
 
-    # Load results: prefer CSV, fall back to JSON
+    # Load full-mode results
     results_csv  = args.results_csv  or _latest_file("results/results_*.csv")
     results_json = args.results_json or _latest_valid_json_file("results/results_*.json")
     metrics_json = args.metrics_json or _latest_valid_json_file("results/metrics_*.json")
@@ -952,15 +919,8 @@ def main() -> None:
         if path and os.path.basename(path).startswith("checkpoint_"):
             raise ValueError(f"Refusing to read checkpoint file as results: {path}")
 
-    df = None
-    if results_csv and os.path.exists(results_csv):
-        df = pd.read_csv(results_csv)
-        print(f"Results CSV : {results_csv}")
-    elif results_json and os.path.exists(results_json):
-        with open(results_json) as f:
-            df = pd.DataFrame(json.load(f))
-        print(f"Results JSON: {results_json}")
-    else:
+    df = _load_df(results_csv, results_json, "Results")
+    if df.empty:
         raise FileNotFoundError(
             "Could not find results file. Run run_eval.py first or pass --results-csv / --results-json."
         )
@@ -974,6 +934,20 @@ def main() -> None:
         except json.JSONDecodeError:
             print(f"[WARN] Skipping malformed metrics JSON: {metrics_json}")
 
+    # Load control-mode results (optional)
+    df_ctrl = None
+    if args.control_results:
+        ctrl_path = args.control_results
+        if os.path.basename(ctrl_path).startswith("checkpoint_"):
+            raise ValueError(f"Refusing to read checkpoint file: {ctrl_path}")
+        if ctrl_path.endswith(".csv"):
+            df_ctrl = _load_df(ctrl_path, None, "Control results")
+        else:
+            df_ctrl = _load_df(None, ctrl_path, "Control results")
+        if df_ctrl.empty:
+            print(f"[WARN] Could not load control results from {ctrl_path}")
+            df_ctrl = None
+
     if args.output_dir:
         out_dir = args.output_dir
     else:
@@ -982,26 +956,22 @@ def main() -> None:
 
     os.makedirs(out_dir, exist_ok=True)
 
-    # Existing plots
+    # Dataset B focused plots
     _plot_decision_distribution(df, out_dir)
-    _plot_approval_by_category(df, out_dir)
     _plot_avg_turns_by_category(df, out_dir)
-    _plot_pairing_matrix(df, out_dir)
-    _plot_survival_hist(df, out_dir)
     _plot_confusion(df, out_dir)
-
-    # New plots
-    _plot_trap_fp_by_dev_model(df, out_dir)
     _plot_trap_fp_by_category(df, out_dir)
+    _plot_admin_fpr_bar(df, out_dir)
     _plot_fpr_model_x_category(df, out_dir)
-    _plot_control_tp_by_admin_model(df, out_dir)
-    _plot_bias_analysis(df, metrics, out_dir)
-    _plot_dev_model_x_category(df, out_dir)
     _plot_admin_model_x_category(df, out_dir)
-    _plot_dev_vs_admin_tradeoff(df, out_dir)
+
+    # Full vs control comparison (only when --control-results provided)
+    if df_ctrl is not None:
+        _plot_full_vs_control(df, df_ctrl, out_dir)
+        _plot_full_vs_control_by_category(df, df_ctrl, out_dir)
 
     # Summary (writes file + prints to console)
-    _write_summary(df, metrics, out_dir)
+    _write_summary(df, metrics, out_dir, df_ctrl=df_ctrl)
 
     print(f"\nAnalysis output: {out_dir}/")
 
