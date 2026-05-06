@@ -948,6 +948,10 @@ def main() -> None:
     results_json = args.results_json or _latest_valid_json_file("results/results_*.json")
     metrics_json = args.metrics_json or _latest_valid_json_file("results/metrics_*.json")
 
+    for path in (results_csv, results_json, metrics_json):
+        if path and os.path.basename(path).startswith("checkpoint_"):
+            raise ValueError(f"Refusing to read checkpoint file as results: {path}")
+
     df = None
     if results_csv and os.path.exists(results_csv):
         df = pd.read_csv(results_csv)

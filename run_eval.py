@@ -246,13 +246,9 @@ if __name__ == "__main__":
                             "escalation_only=per-turn escalation templates | "
                             "full=all components (default)"
                         ))
-    parser.add_argument("--no-persuasion",    action="store_true",
-                        help="Shorthand for --persuasion-mode control")
     args = parser.parse_args()
 
-    if args.no_persuasion:
-        CFG.persuasion_mode = PersuasionMode.CONTROL
-    elif args.persuasion_mode:
+    if args.persuasion_mode:
         CFG.persuasion_mode = PersuasionMode(args.persuasion_mode)
 
     if args.workers:

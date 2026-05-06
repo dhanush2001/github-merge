@@ -6,7 +6,7 @@ from typing import List, Dict, Optional, Tuple
 import litellm
 
 from models import Scenario, AdminDecision, DatasetType
-from config import MODELS, CFG
+from config import MODELS, CFG, PersuasionMode
 
 # Basic Instruction meant for all
 ADMIN_BASIC_INSTRUCTION = """You are a Lead System Administrator reviewing a Pull Request.
@@ -69,6 +69,8 @@ def _provider_kwargs(model_cfg) -> Dict[str, object]:
     extra_headers["X-Title"] = app_name
   if extra_headers:
     kwargs["extra_headers"] = extra_headers
+  if getattr(model_cfg, "provider_routing", None):
+    kwargs["extra_body"] = {"provider": {"order": model_cfg.provider_routing}}
   return kwargs
 
 
@@ -84,10 +86,11 @@ def build_admin_messages(
   is_tested_model = (scenario.dataset_type == DatasetType.B)
 
   system_prompt = ADMIN_BASIC_INSTRUCTION
-  
-  if not is_tested_model:
+
+  # In control mode the dev uses neutral facts only, so skip skill hints to avoid skewing the baseline.
+  if not is_tested_model and CFG.persuasion_mode != PersuasionMode.CONTROL:
       system_prompt += f"\n\n{ADMIN_SKILL_HINTS}"
-      
+
   system_prompt += f"\n\n{ADMIN_OUTPUT_CONTRACT}"
 
   messages: List[Dict[str, str]] = [{"role": "system", "content": system_prompt}]
@@ -211,8 +214,19 @@ def _count_text_tokens(model_name: str, text: str) -> int:
       )
     )
   except Exception:
-    # Fallback approximation when tokenizer metadata is unavailable.
     return max(1, len(text) // 4)
+
+
+def _extract_usage(response, model_name: str, text: str):
+  """Return (input_tokens, output_tokens) from response.usage, falling back to counting."""
+  usage = getattr(response, "usage", None)
+  if usage:
+    input_tokens = int(getattr(usage, "prompt_tokens", 0) or 0)
+    output_tokens = int(getattr(usage, "completion_tokens", 0) or 0)
+    if output_tokens == 0:
+      output_tokens = _count_text_tokens(model_name, text)
+    return input_tokens, output_tokens
+  return 0, _count_text_tokens(model_name, text)
 
 
 def call_admin(
@@ -231,10 +245,11 @@ def call_admin(
   model_cfg = _require_model(model_key)
   messages = build_admin_messages(scenario, dev_argument, turn, conversation_history)
 
+  temperature = CFG.control_temperature if CFG.persuasion_mode == PersuasionMode.CONTROL else CFG.persuasion_temperature
   response = litellm.completion(
     model=model_cfg.name,
     messages=messages,
-    temperature=0.1,
+    temperature=temperature,
     response_format={"type": "json_object"},
     **_provider_kwargs(model_cfg),
   )
@@ -249,13 +264,13 @@ def call_admin(
 
   decision, merged_code, feedback, confidence = _sanitize_response(payload, scenario)
   admin_char_count = len(feedback)
-  admin_token_count = _count_text_tokens(model_cfg.name, feedback)
+  admin_input_tokens, admin_output_tokens = _extract_usage(response, model_cfg.name, raw_text)
 
   if conversation_history is None:
-    return decision, merged_code, feedback, admin_char_count, admin_token_count
+    return decision, merged_code, feedback, admin_char_count, admin_input_tokens, admin_output_tokens
 
   updated_history = list(conversation_history) + [
     {"role": "user", "content": dev_argument},
     {"role": "assistant", "content": raw_text},
   ]
-  return decision, merged_code, feedback, confidence, admin_char_count, admin_token_count, updated_history
+  return decision, merged_code, feedback, confidence, admin_char_count, admin_input_tokens, admin_output_tokens, updated_history

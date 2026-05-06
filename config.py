@@ -24,16 +24,28 @@ class ModelConfig:
     name: str
     provider: str
     api_key_env: str
+    provider_routing: list = field(default_factory=list)
 
 MODELS = {
-    "openrouter-claude-opus": ModelConfig("openrouter/anthropic/claude-opus-4-5", "openrouter", "OPENROUTER_API_KEY"),
-    "openrouter-claude-sonnet": ModelConfig("openrouter/anthropic/claude-sonnet-4", "openrouter", "OPENROUTER_API_KEY"),
-    "openrouter-gpt4o": ModelConfig("openrouter/openai/gpt-4o", "openrouter", "OPENROUTER_API_KEY"),
-    "openrouter-llama-3.3-70b-instruct": ModelConfig("openrouter/meta-llama/llama-3.3-70b-instruct", "openrouter", "OPENROUTER_API_KEY"),
-    "openrouter-gemma-4-31b-it": ModelConfig("openrouter/google/gemma-4-31b-it", "openrouter", "OPENROUTER_API_KEY"),
-    "openrouter-qwen-3.5": ModelConfig("openrouter/qwen/qwen3-235b-a22b", "openrouter", "OPENROUTER_API_KEY"),
-    "openrouter-glm-5.1": ModelConfig("openrouter/z-ai/glm-5.1", "openrouter", "OPENROUTER_API_KEY"),
-    
+    "gpt-4.1": ModelConfig(
+        "openrouter/openai/gpt-4.1", "openrouter", "OPENROUTER_API_KEY"
+    ),
+    "claude-sonnet-4": ModelConfig(
+        "openrouter/anthropic/claude-sonnet-4", "openrouter", "OPENROUTER_API_KEY"
+    ),
+    "gemini-2.5-flash": ModelConfig(
+        "openrouter/google/gemini-2.5-flash", "openrouter", "OPENROUTER_API_KEY"
+    ),
+    "llama-3.3-70b": ModelConfig(
+        "openrouter/meta-llama/llama-3.3-70b-instruct", "openrouter", "OPENROUTER_API_KEY"
+    ),
+    "deepseek-v3.2": ModelConfig(
+        "openrouter/deepseek/deepseek-v3.2", "openrouter", "OPENROUTER_API_KEY"
+    ),
+    "qwen3-32b": ModelConfig(
+        "openrouter/qwen/qwen3-32b", "openrouter", "OPENROUTER_API_KEY",
+        provider_routing=["Together"]
+    ),
 }
 
 @dataclass
@@ -44,46 +56,20 @@ class DatasetEntry:
 
 
 def _default_datasets() -> List[DatasetEntry]:
-    """Load every JSON dataset under data/ and enable them by default."""
     data_dir = Path("data")
     if not data_dir.exists():
         return []
-
-    entries: List[DatasetEntry] = []
-    for dataset_file in sorted(data_dir.glob("*.json")):
-        entries.append(
-            DatasetEntry(
-                path=str(dataset_file),
-                label=dataset_file.stem,
-                enabled=True,
-            )
-        )
-    return entries
-
-
-def _default_datasets() -> List[DatasetEntry]:
-    """Load every JSON dataset under data/ and enable them by default."""
-    data_dir = Path("data")
-    if not data_dir.exists():
-        return []
-
-    entries: List[DatasetEntry] = []
-    for dataset_file in sorted(data_dir.glob("*.json")):
-        entries.append(
-            DatasetEntry(
-                path=str(dataset_file),
-                label=dataset_file.stem,
-                enabled=True,
-            )
-        )
-    return entries
+    return [
+        DatasetEntry(path=str(f), label=f.stem, enabled=True)
+        for f in sorted(data_dir.glob("*.json"))
+    ]
 
 @dataclass
 class PipelineConfig:
     dev_models: List[str]   = field(default_factory=lambda: list(MODELS.keys()))
     admin_models: List[str] = field(default_factory=lambda: list(MODELS.keys()))
     max_turns: int          = 10
-    judge_model: str        = "azure-gpt4o"
+    judge_model: str        = "gpt-4.1"
     persuasion_temperature: float = 0.35
     control_temperature: float = 0.1
     results_dir: str        = "results"

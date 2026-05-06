@@ -76,6 +76,8 @@ def _provider_kwargs(model_cfg) -> Dict[str, object]:
         extra_headers["X-Title"] = app_name
     if extra_headers:
         kwargs["extra_headers"] = extra_headers
+    if getattr(model_cfg, "provider_routing", None):
+        kwargs["extra_body"] = {"provider": {"order": model_cfg.provider_routing}}
     return kwargs
 
 
