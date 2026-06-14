@@ -101,7 +101,9 @@ def compute_developer_metrics(results: List[ScenarioResult]) -> Dict:
         "avg_turns_overall":     avg(turns),
         "avg_turns_on_approve":  avg(turns_on_approve),
         "avg_turns_on_reject":   avg(turns_on_reject),
-        "turns_distribution":    sorted(turns),
+        "turns_distribution":    {str(k): int(v) for k, v in sorted(
+                                     __import__("collections").Counter(turns).items()
+                                 )},
         "timeout_rate":          safe_div(sum(r.timed_out for r in results), len(results)),
         "hallucination_rate":    hallucination_rate,
         "per_model":             per_model,
@@ -342,8 +344,8 @@ def compute_judge_metrics(results: List[ScenarioResult]) -> Dict:
 # ── Top-Level Aggregator ───────────────────────────────────────────────────────
 
 def compute_all_metrics(results: List[ScenarioResult]) -> Dict:
-    a_results = [r for r in results if r.dataset_type == DatasetType.A]
-    b_results = [r for r in results if r.dataset_type == DatasetType.B]
+    b_results   = [r for r in results if r.dataset_type == DatasetType.B]
+    ctrl_results = [r for r in results if r.dataset_type == DatasetType.B_CONTROL]
 
     metrics: Dict = {
         "combined": {
@@ -352,16 +354,17 @@ def compute_all_metrics(results: List[ScenarioResult]) -> Dict:
         }
     }
 
-    if a_results:
-        metrics["dataset_a"] = {
-            "developer": compute_developer_metrics(a_results),
-            "admin":     compute_admin_metrics(a_results),
-            "judge":     compute_judge_metrics(a_results),
-        }
-
     if b_results:
         metrics["dataset_b"] = {
-            "admin":     compute_admin_metrics(b_results),
+            "admin":  compute_admin_metrics(b_results),
+            "judge":  compute_judge_metrics(b_results),
+        }
+
+    if ctrl_results:
+        metrics["dataset_b_control"] = {
+            "developer": compute_developer_metrics(ctrl_results),
+            "admin":     compute_admin_metrics(ctrl_results),
+            "judge":     compute_judge_metrics(ctrl_results),
         }
 
     return metrics

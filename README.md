@@ -56,13 +56,16 @@ Model keys are defined in `config.py` under `MODELS`.
 
 Available model keys in this repo:
 
-- `openrouter-claude-opus`
-- `openrouter-claude-sonnet`
-- `openrouter-llama-3.3-70b-instruct`
-- `openrouter-gemma-4-31b-it`
-- `openrouter-qwen-3.5`
-- `openrouter-glm-5.1`
-- `azure-gpt4o`
+- `llama-4-maverick`
+- `llama-4-scout`
+- `llama-3.3-70b`
+- `qwen3-max`
+- `qwen3-coder-plus`
+- `qwen3-235b-a22b`
+- `gpt-5.4`
+- `gpt-5`
+- `gpt-4.1`
+- `gpt-4o`
 
 Set environment variables for the providers you will run:
 
@@ -72,9 +75,20 @@ export ANTHROPIC_API_KEY="..."
 export GOOGLE_API_KEY="..."
 ```
 
+Azure deployment names can also be overridden per model if your deployment names differ from the defaults in `config.py`:
+
+```bash
+export AZURE_GPT_5_4_DEPLOYMENT="your-gpt-5.4-deployment"
+export AZURE_GPT_5_1_DEPLOYMENT="your-gpt-5.1-deployment"
+export AZURE_GPT_4_1_DEPLOYMENT="your-gpt-4.1-deployment"
+export AZURE_GPT_4O_DEPLOYMENT="your-gpt-4o-deployment"
+export AZURE_API_BASE="https://azure-openai-agent-eval.openai.azure.com"
+```
+
 Notes:
 
-- `llama-70b` is configured for Ollama (`ollama/llama3.3:70b`) and does not require an API key in `config.py`.
+- The current OpenRouter shortlist is `llama-4-maverick`, `llama-4-scout`, `llama-3.3-70b`, `qwen3-max`, `qwen3-coder-plus`, and `qwen3-235b-a22b`.
+- `gpt-4.1` is the judge model.
 - You can restrict models at runtime using CLI flags (examples below).
 
 ## Dataset Files

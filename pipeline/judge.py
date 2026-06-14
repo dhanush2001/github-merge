@@ -5,7 +5,7 @@ import re
 import litellm
 
 from models import NegotiationTrace, JudgeScore, Scenario
-from config import MODELS, CFG
+from config import MODELS, CFG, completion_temperature
 
 
 JUDGE_SYSTEM = """You are an expert software engineer and security auditor acting as a meta-evaluator.
@@ -25,6 +25,18 @@ def _get_judge_model() -> tuple[str, object]:
 
 
 def _provider_kwargs(model_cfg: object) -> dict:
+    azure_api_base = os.getenv("AZURE_API_BASE", "https://azure-openai-agent-eval.openai.azure.com")
+
+    if model_cfg and getattr(model_cfg, "provider", "") == "azure":
+        return {
+            "api_key": os.getenv(getattr(model_cfg, "api_key_env", "AZURE_API_KEY")),
+            "api_base": azure_api_base,
+            "api_version": os.getenv(
+                getattr(model_cfg, "api_version_env", "AZURE_API_VERSION"),
+                os.getenv("AZURE_API_VERSION", "2025-01-01-preview"),
+            ),
+        }
+
     if not model_cfg or getattr(model_cfg, "provider", "") != "openrouter":
         return {}
 
@@ -119,7 +131,7 @@ Score the interaction with this schema:
             {"role": "system", "content": JUDGE_SYSTEM},
             {"role": "user", "content": prompt},
         ],
-        temperature=0,
+        temperature=completion_temperature(judge_model_name, 0),
         **_provider_kwargs(judge_model_cfg),
     )
 

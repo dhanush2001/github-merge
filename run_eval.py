@@ -3,21 +3,20 @@ from datetime import datetime
 from itertools import product
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import threading
-from models import Scenario, ScenarioResult, AdminDecision, DatasetType
+from models import Scenario, ScenarioResult, AdminDecision
 from pipeline.negotiation import run_negotiation
 from pipeline.judge import judge_interaction
 from pipeline.code_runner import detect_hallucinated_imports
 from evaluation.metrics import compute_all_metrics, results_to_dataframe
 from config import CFG, MODELS, PersuasionMode
-from checkpoint import CheckpointManager, TokenLimitReached, RateLimitReached
+from checkpoint import CheckpointManager, TokenLimitReached, RateLimitReached, find_latest_checkpoint
 import litellm
 import pandas as pd
 
 _print_lock = threading.Lock()
 
 MAX_RETRIES = 3
-# Backoff in seconds for each retry attempt (30s, 60s, 120s)
-_RETRY_BACKOFF = [30, 60, 120]
+_RETRY_BACKOFF = [60, 120, 180]
 
 _RETRYABLE_ERRORS = (
     TokenLimitReached,
@@ -84,9 +83,7 @@ def run_single(scenario, dev_model, admin_model, dataset_label) -> ScenarioResul
     trace = run_negotiation(scenario, dev_model, admin_model)
     hallucinated, _ = detect_hallucinated_imports(scenario.developer_commit)
 
-    judge_score = None
-    if scenario.dataset_type == DatasetType.A:
-        judge_score = judge_interaction(scenario, trace)
+    judge_score = judge_interaction(scenario, trace)
 
     is_correct = None
     if scenario.expected_outcome:
@@ -104,10 +101,12 @@ def run_single(scenario, dev_model, admin_model, dataset_label) -> ScenarioResul
         total_turns=trace.total_turns,
         total_dev_chars=trace.total_dev_chars,
         total_dev_input_tokens=trace.total_dev_input_tokens,
-        total_dev_output_tokens=trace.total_dev_output_tokens,
+        total_dev_tokens=trace.total_dev_tokens,
         total_admin_chars=trace.total_admin_chars,
         total_admin_input_tokens=trace.total_admin_input_tokens,
-        total_admin_output_tokens=trace.total_admin_output_tokens,
+        total_admin_tokens=trace.total_admin_tokens,
+        total_input_tokens=trace.total_input_tokens,
+        total_output_tokens=trace.total_output_tokens,
         total_tokens=trace.total_tokens,
         timed_out=trace.timed_out,
         unit_test_passed=getattr(trace, "_unit_test_passed", False),
@@ -127,9 +126,26 @@ def run_single(scenario, dev_model, admin_model, dataset_label) -> ScenarioResul
 
 def main(args):
     os.makedirs(CFG.results_dir, exist_ok=True)
-    run_id = getattr(args, "_resume_run_id", None) or datetime.now().strftime("%Y%m%d_%H%M%S")
     run_mode = CFG.persuasion_mode.value
-    ckpt = CheckpointManager(CFG.results_dir, run_id)
+
+    if getattr(args, "resume", None):
+        resume_path = args.resume
+        if resume_path == "auto":
+            resume_path = find_latest_checkpoint(CFG.results_dir)
+            if not resume_path:
+                print("[ERROR] No checkpoint files found in results/. Starting fresh.")
+                resume_path = None
+        if resume_path:
+            ckpt = CheckpointManager.from_file(resume_path)
+            run_id = ckpt.run_id
+            print(f"[INFO] Resuming checkpoint: {resume_path} (run_id={run_id})")
+            print(f"[INFO] Checkpoint status: {ckpt.summary()}")
+        else:
+            run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+            ckpt = CheckpointManager(CFG.results_dir, run_id)
+    else:
+        run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+        ckpt = CheckpointManager(CFG.results_dir, run_id)
 
     if args.datasets:
         requested_labels = set(args.datasets)
@@ -173,8 +189,31 @@ def main(args):
     print(f"\n  Running {total} tasks across {len(pairings)} model pairing(s) "
           f"with {CFG.max_workers} workers...")
 
+    # Seed results from checkpoint so metrics cover the full run, not just new tasks
     all_results = []
-    conversation_logs = []
+    for r in ckpt.all_completed_results():
+        try:
+            all_results.append(ScenarioResult(**r))
+        except Exception:
+            pass
+    print(f"  Loaded {len(all_results)} completed results from checkpoint.")
+
+    conversation_logs = [
+        {
+            "scenario_id": r.scenario_id,
+            "run_mode": run_mode,
+            "persuasion_mode": r.persuasion_mode,
+            "dataset_label": r.dataset_label,
+            "dataset_type": str(r.dataset_type),
+            "category": r.category,
+            "dev_model": r.dev_model,
+            "admin_model": r.admin_model,
+            "final_decision": str(r.final_decision),
+            "total_turns": r.total_turns,
+            "turns": [t.model_dump() for t in r.turns],
+        }
+        for r in all_results
+    ]
 
     def _run_task(task):
         scenario, label, dev_model, admin_model = task
@@ -219,7 +258,7 @@ def main(args):
                     )
                 ckpt.mark_completed(
                     scenario.scenario_id, dev_model, admin_model,
-                    result.model_dump(exclude={"turns"}, mode="json"),
+                    result.model_dump(mode="json"),
                 )
                 all_results.append(result)
                 conversation_logs.append(
@@ -295,6 +334,9 @@ if __name__ == "__main__":
     parser.add_argument("--admin-models",     nargs="+", default=None)
     parser.add_argument("--workers",          type=int,  default=None,
                         help="Number of parallel workers (default: 1)")
+    parser.add_argument("--resume",           nargs="?", const="auto", default=None,
+                        metavar="CHECKPOINT_PATH",
+                        help="Resume from a checkpoint. Omit path to auto-pick the latest.")
     parser.add_argument("--persuasion-mode",  default=None, choices=valid_modes,
                         help=(
                             "Ablation condition for developer agent persuasion. "

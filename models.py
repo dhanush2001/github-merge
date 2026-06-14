@@ -3,7 +3,6 @@ from typing import Optional, List
 from enum import Enum
 
 class DatasetType(str, Enum):
-    A = "Dataset_A_Zero_Sum"
     B = "Dataset_B_Traps"
     B_CONTROL = "Dataset_B_Control"
 
@@ -56,13 +55,13 @@ class NegotiationTurn(BaseModel):
     turn: int
     dev_argument: str
     dev_char_count: int
-    dev_input_tokens: int = 0
-    dev_output_tokens: int = 0
+    dev_input_token_count: int = 0
+    dev_token_count: int = 0
     admin_decision: AdminDecision
     admin_feedback: str
     admin_char_count: int
-    admin_input_tokens: int = 0
-    admin_output_tokens: int = 0
+    admin_input_token_count: int = 0
+    admin_token_count: int = 0
 
 class NegotiationTrace(BaseModel):
     scenario_id: str
@@ -73,10 +72,12 @@ class NegotiationTrace(BaseModel):
     final_merged_code: Optional[str] = None
     total_dev_chars: int = 0
     total_dev_input_tokens: int = 0
-    total_dev_output_tokens: int = 0
+    total_dev_tokens: int = 0
     total_admin_chars: int = 0
     total_admin_input_tokens: int = 0
-    total_admin_output_tokens: int = 0
+    total_admin_tokens: int = 0
+    total_input_tokens: int = 0
+    total_output_tokens: int = 0
     total_tokens: int = 0
     total_turns: int = 0
     timed_out: bool = False
@@ -101,10 +102,12 @@ class ScenarioResult(BaseModel):
     total_turns: int
     total_dev_chars: int
     total_dev_input_tokens: int = 0
-    total_dev_output_tokens: int = 0
+    total_dev_tokens: int = 0
     total_admin_chars: int = 0
     total_admin_input_tokens: int = 0
-    total_admin_output_tokens: int = 0
+    total_admin_tokens: int = 0
+    total_input_tokens: int = 0
+    total_output_tokens: int = 0
     total_tokens: int = 0
     timed_out: bool
     unit_test_passed: bool
