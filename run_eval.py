@@ -8,10 +8,14 @@ from pipeline.negotiation import run_negotiation
 from pipeline.judge import judge_interaction
 from pipeline.code_runner import detect_hallucinated_imports
 from evaluation.metrics import compute_all_metrics, results_to_dataframe
-from config import CFG, MODELS, PersuasionMode
+from config import (
+    CFG,
+    PersuasionMode,
+    format_runtime_config,
+    validate_runtime_config,
+)
 from checkpoint import CheckpointManager, TokenLimitReached, RateLimitReached, find_latest_checkpoint
 import litellm
-import pandas as pd
 
 _print_lock = threading.Lock()
 
@@ -75,8 +79,56 @@ def load_all_scenarios():
         for s in scenarios:
             s.__dict__["_source_label"] = entry.label
         all_scenarios.extend((s, entry.label) for s in scenarios)
-        print(f"  Loaded {len(scenarios):>3} scenarios [{entry.label}]")
     return all_scenarios
+
+
+def apply_cli_overrides(args) -> None:
+    if args.datasets:
+        requested_labels = set(args.datasets)
+        known_labels = {entry.label for entry in CFG.datasets}
+        unknown_labels = sorted(requested_labels - known_labels)
+        if unknown_labels:
+            print(f"  [WARN] Unknown dataset label(s): {', '.join(unknown_labels)}")
+            print(f"  [INFO] Available labels: {', '.join(sorted(known_labels))}")
+        for entry in CFG.datasets:
+            entry.enabled = entry.label in requested_labels
+
+    if args.dev_models:
+        CFG.dev_models = args.dev_models
+    if args.admin_models:
+        CFG.admin_models = args.admin_models
+
+
+def _run_dir(run_id: str) -> str:
+    """Return a descriptive subdirectory: results/<mode>_<run_id>/"""
+    mode = CFG.persuasion_mode.value
+    path = os.path.join(CFG.results_dir, f"{mode}_{run_id}")
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
+def init_checkpoint(args):
+    if not getattr(args, "resume", None):
+        run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+        run_dir = _run_dir(run_id)
+        return run_id, run_dir, CheckpointManager(run_dir, run_id)
+
+    resume_path = args.resume
+    if resume_path == "auto":
+        resume_path = find_latest_checkpoint(CFG.results_dir)
+        if not resume_path:
+            print("[ERROR] No checkpoint files found in results/. Starting fresh.")
+
+    if not resume_path:
+        run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+        run_dir = _run_dir(run_id)
+        return run_id, run_dir, CheckpointManager(run_dir, run_id)
+
+    ckpt = CheckpointManager.from_file(resume_path)
+    run_dir = os.path.dirname(ckpt.path)
+    print(f"[INFO] Resuming checkpoint: {resume_path} (run_id={ckpt.run_id})")
+    print(f"[INFO] Checkpoint status: {ckpt.summary()}")
+    return ckpt.run_id, run_dir, ckpt
 
 
 def run_single(scenario, dev_model, admin_model, dataset_label) -> ScenarioResult:
@@ -127,57 +179,25 @@ def run_single(scenario, dev_model, admin_model, dataset_label) -> ScenarioResul
 def main(args):
     os.makedirs(CFG.results_dir, exist_ok=True)
     run_mode = CFG.persuasion_mode.value
+    try:
+        apply_cli_overrides(args)
+        validate_runtime_config(CFG.dev_models, CFG.admin_models, CFG.judge_model)
+    except ValueError as e:
+        print(f"\n[ERROR] {e}")
+        return
 
-    if getattr(args, "resume", None):
-        resume_path = args.resume
-        if resume_path == "auto":
-            resume_path = find_latest_checkpoint(CFG.results_dir)
-            if not resume_path:
-                print("[ERROR] No checkpoint files found in results/. Starting fresh.")
-                resume_path = None
-        if resume_path:
-            ckpt = CheckpointManager.from_file(resume_path)
-            run_id = ckpt.run_id
-            print(f"[INFO] Resuming checkpoint: {resume_path} (run_id={run_id})")
-            print(f"[INFO] Checkpoint status: {ckpt.summary()}")
-        else:
-            run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
-            ckpt = CheckpointManager(CFG.results_dir, run_id)
-    else:
-        run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
-        ckpt = CheckpointManager(CFG.results_dir, run_id)
-
-    if args.datasets:
-        requested_labels = set(args.datasets)
-        known_labels = {entry.label for entry in CFG.datasets}
-        unknown_labels = sorted(requested_labels - known_labels)
-        if unknown_labels:
-            print(f"  [WARN] Unknown dataset label(s): {', '.join(unknown_labels)}")
-            print(f"  [INFO] Available labels: {', '.join(sorted(known_labels))}")
-        requested_labels = set(args.datasets)
-        known_labels = {entry.label for entry in CFG.datasets}
-        unknown_labels = sorted(requested_labels - known_labels)
-        if unknown_labels:
-            print(f"  [WARN] Unknown dataset label(s): {', '.join(unknown_labels)}")
-            print(f"  [INFO] Available labels: {', '.join(sorted(known_labels))}")
-        for entry in CFG.datasets:
-            entry.enabled = entry.label in requested_labels
-            entry.enabled = entry.label in requested_labels
-    if args.dev_models:
-        CFG.dev_models = args.dev_models
-    if args.admin_models:
-        CFG.admin_models = args.admin_models
+    run_id, run_dir, ckpt = init_checkpoint(args)
 
     all_scenarios = load_all_scenarios()
-    if not all_scenarios:
-        print("\n[ERROR] No scenarios loaded. Check --datasets labels or data/*.json files.")
-        return
     if not all_scenarios:
         print("\n[ERROR] No scenarios loaded. Check --datasets labels or data/*.json files.")
         return
     pairings = list(product(CFG.dev_models, CFG.admin_models))
     if args.cross_only:
         pairings = [(d, a) for d, a in pairings if d != a]
+    if not pairings:
+        print("\n[ERROR] No model pairings selected. Check --cross-only and model filters.")
+        return
 
     all_tasks = [
         (scenario, label, dev_model, admin_model)
@@ -291,17 +311,11 @@ def main(args):
                           f"dev={dev_model} admin={admin_model}: {e}")
                 ckpt.mark_error(scenario.scenario_id, dev_model, admin_model, str(e))
 
-    out_json = f"{CFG.results_dir}/results_{run_id}.json"
-    out_csv  = f"{CFG.results_dir}/results_{run_id}.csv"
-    out_conversation_json = f"{CFG.results_dir}/conversation_logs_{run_id}.json"
-    
-    # Verify results directory exists before writing
-    if not os.path.exists(CFG.results_dir):
-        print(f"[ERROR] Results directory does not exist: {CFG.results_dir}")
-        print(f"[ERROR] Current working directory: {os.getcwd()}")
-        os.makedirs(CFG.results_dir, exist_ok=True)
-        print(f"[INFO] Created directory: {CFG.results_dir}")
-    
+    out_json              = os.path.join(run_dir, "results.json")
+    out_csv               = os.path.join(run_dir, "results.csv")
+    out_conversation_json = os.path.join(run_dir, "conversation_logs.json")
+    out_metrics           = os.path.join(run_dir, "metrics.json")
+
     with open(out_json, "w") as f:
         json.dump([r.model_dump(exclude={"turns"}) for r in all_results], f, indent=2, default=str)
 
@@ -312,32 +326,51 @@ def main(args):
 
     metrics = compute_all_metrics(all_results)
     metrics["run_meta"] = {
-        "run_id": run_id,
-        "run_mode": run_mode,
+        "run_id":          run_id,
+        "run_mode":        run_mode,
         "persuasion_enabled": CFG.persuasion_enabled,
-        "temperature": CFG.persuasion_temperature if CFG.persuasion_enabled else CFG.control_temperature,
+        "temperature":     CFG.persuasion_temperature if CFG.persuasion_enabled else CFG.control_temperature,
     }
     metrics = _to_json_native(metrics)
-    with open(f"{CFG.results_dir}/metrics_{run_id}.json", "w") as f:
+    with open(out_metrics, "w") as f:
         json.dump(metrics, f, indent=2)
 
-    print(f"\nDone. Results: {out_json}")
-    print(f"Conversation logs: {out_conversation_json}")
+    from utils import get_parse_stats
+    stats = get_parse_stats()
+    if stats:
+        totals = {}
+        for k, v in stats.items():
+            model, _, status = k.rpartition(":")
+            entry = totals.setdefault(model, {"ok": 0, "fail": 0})
+            entry[status] = v
+        print("\n[INFO] Admin JSON parse rates:")
+        for model, entry in sorted(totals.items()):
+            total = entry["ok"] + entry["fail"]
+            rate = (entry["fail"] / total * 100) if total else 0.0
+            print(f"  {model:50s} fail={entry['fail']:5d} / {total:5d} ({rate:5.1f}%)")
+        parse_stats_path = os.path.join(run_dir, "parse_stats.json")
+        with open(parse_stats_path, "w") as f:
+            json.dump(totals, f, indent=2)
+
+    print(f"\nDone. Output directory: {run_dir}/")
 
 
 if __name__ == "__main__":
     valid_modes = [m.value for m in PersuasionMode]
     parser = argparse.ArgumentParser()
-    parser.add_argument("--cross-only",       action="store_true")
-    parser.add_argument("--datasets",         nargs="+", default=None)
-    parser.add_argument("--dev-models",       nargs="+", default=None)
-    parser.add_argument("--admin-models",     nargs="+", default=None)
-    parser.add_argument("--workers",          type=int,  default=None,
-                        help="Number of parallel workers (default: 1)")
-    parser.add_argument("--resume",           nargs="?", const="auto", default=None,
+    parser.add_argument("--datasets",        nargs="+", default=None)
+    parser.add_argument("--cross-only",      action="store_true",
+                        help="Skip same-model pairings (dev==admin).")
+    parser.add_argument("--dev-models",      nargs="+", default=None,
+                        help="Developer model key(s), e.g. --dev-models gpt-5.4 (default: all models)")
+    parser.add_argument("--admin-models",    nargs="+", default=None,
+                        help="Admin model key(s), e.g. --admin-models gpt-5-mini gpt-5.1 gpt-5.4 (default: all models)")
+    parser.add_argument("--workers",         type=int, default=None,
+                        help="Number of parallel workers")
+    parser.add_argument("--resume",          nargs="?", const="auto", default=None,
                         metavar="CHECKPOINT_PATH",
                         help="Resume from a checkpoint. Omit path to auto-pick the latest.")
-    parser.add_argument("--persuasion-mode",  default=None, choices=valid_modes,
+    parser.add_argument("--persuasion-mode", default=None, choices=valid_modes,
                         help=(
                             "Ablation condition for developer agent persuasion. "
                             "control=neutral facts only | "

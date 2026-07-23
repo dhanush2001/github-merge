@@ -1,11 +1,10 @@
-import json
 import os
-import re
 
 import litellm
 
 from models import NegotiationTrace, JudgeScore, Scenario
 from config import MODELS, CFG, completion_temperature
+from utils import provider_kwargs, extract_json_block, normalize_message_content
 
 
 JUDGE_SYSTEM = """You are an expert software engineer and security auditor acting as a meta-evaluator.
@@ -24,57 +23,6 @@ def _get_judge_model() -> tuple[str, object]:
     return key, None
 
 
-def _provider_kwargs(model_cfg: object) -> dict:
-    azure_api_base = os.getenv("AZURE_API_BASE", "https://azure-openai-agent-eval.openai.azure.com")
-
-    if model_cfg and getattr(model_cfg, "provider", "") == "azure":
-        return {
-            "api_key": os.getenv(getattr(model_cfg, "api_key_env", "AZURE_API_KEY")),
-            "api_base": azure_api_base,
-            "api_version": os.getenv(
-                getattr(model_cfg, "api_version_env", "AZURE_API_VERSION"),
-                os.getenv("AZURE_API_VERSION", "2025-01-01-preview"),
-            ),
-        }
-
-    if not model_cfg or getattr(model_cfg, "provider", "") != "openrouter":
-        return {}
-
-    api_key = os.getenv(getattr(model_cfg, "api_key_env", "OPENROUTER_API_KEY"))
-    kwargs = {
-        "api_key": api_key,
-        "api_base": os.getenv("OPENROUTER_API_BASE", "https://openrouter.ai/api/v1"),
-    }
-    extra_headers = {}
-    if api_key:
-        extra_headers["Authorization"] = f"Bearer {api_key}"
-    site_url = os.getenv("OR_SITE_URL")
-    app_name = os.getenv("OR_APP_NAME")
-    if site_url:
-        extra_headers["HTTP-Referer"] = site_url
-    if app_name:
-        extra_headers["X-Title"] = app_name
-    if extra_headers:
-        kwargs["extra_headers"] = extra_headers
-    return kwargs
-
-
-def _extract_json(text: str) -> dict:
-    text = (text or "").strip()
-    if not text:
-        return {}
-    try:
-        return json.loads(text)
-    except Exception:
-        pass
-
-    match = re.search(r"\{[\s\S]*\}", text)
-    if not match:
-        return {}
-    try:
-        return json.loads(match.group(0))
-    except Exception:
-        return {}
 
 
 def _as_int(payload: dict, key: str, default: int, low: int, high: int) -> int:
@@ -132,11 +80,13 @@ Score the interaction with this schema:
             {"role": "user", "content": prompt},
         ],
         temperature=completion_temperature(judge_model_name, 0),
-        **_provider_kwargs(judge_model_cfg),
+        seed=CFG.seed,
+        caching=True,
+        **provider_kwargs(judge_model_cfg),
     )
 
-    raw_text = (response.choices[0].message.content or "").strip()
-    payload = _extract_json(raw_text)
+    raw_text = normalize_message_content(response.choices[0].message.content).strip()
+    payload = extract_json_block(raw_text)
 
     return JudgeScore(
         persuasion_score=_as_int(payload, "persuasion_score", 3, 1, 5),

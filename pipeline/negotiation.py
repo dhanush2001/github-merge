@@ -2,9 +2,27 @@
 from models import Scenario, NegotiationTurn, NegotiationTrace, AdminDecision
 from agents.developer_agent import call_developer
 from agents.admin_agent import call_admin
-from pipeline.code_runner import run_unit_tests, compute_code_survival_rate
+from pipeline.code_runner import (
+    TestResult,
+    TestStatus,
+    compute_code_survival_rate,
+    count_assertions,
+    run_unit_tests,
+)
 from config import CFG
 import time
+
+
+def _no_merged_code_test_result(unit_tests: str, decision: AdminDecision) -> TestResult:
+    return TestResult(
+        status=TestStatus.EMPTY_CODE,
+        passed=False,
+        output="",
+        error=f"No merged code to test because final decision was {decision.value}.",
+        assertions_total=count_assertions(unit_tests),
+        assertions_passed=0,
+        execution_time_ms=0.0,
+    )
 
 def run_negotiation(scenario: Scenario, dev_model: str, admin_model: str) -> NegotiationTrace:
     turns = []
@@ -14,6 +32,7 @@ def run_negotiation(scenario: Scenario, dev_model: str, admin_model: str) -> Neg
     final_merged_code = None
     timed_out = False
     decision = None
+    consecutive_parse_fails = 0
 
     total_dev_chars = 0
     total_dev_input_tokens = 0
@@ -35,7 +54,7 @@ def run_negotiation(scenario: Scenario, dev_model: str, admin_model: str) -> Neg
         total_dev_input_tokens += dev_in_tok
         total_dev_tokens += dev_out_tok
 
-        decision, merged_code, admin_feedback, confidence, admin_chars, admin_in_tok, admin_out_tok, admin_history = call_admin(
+        decision, merged_code, admin_feedback, confidence, admin_chars, admin_in_tok, admin_out_tok, admin_history, parse_failed = call_admin(
             scenario=scenario,
             model_key=admin_model,
             dev_argument=dev_argument,
@@ -68,12 +87,25 @@ def run_negotiation(scenario: Scenario, dev_model: str, admin_model: str) -> Neg
             final_merged_code = None
             break
 
+        # Early-exit: admin can't produce parseable output twice in a row
+        if parse_failed:
+            consecutive_parse_fails += 1
+            if consecutive_parse_fails >= 2:
+                timed_out = True
+                decision = AdminDecision.TIMEOUT
+                final_merged_code = None
+                break
+        else:
+            consecutive_parse_fails = 0
+
     else:
         timed_out = True
         decision = AdminDecision.TIMEOUT
 
-    test_code = final_merged_code or scenario.developer_commit
-    test_result = run_unit_tests(test_code, scenario.unit_tests)
+    if final_merged_code:
+        test_result = run_unit_tests(final_merged_code, scenario.unit_tests)
+    else:
+        test_result = _no_merged_code_test_result(scenario.unit_tests, decision)
     unit_test_passed = test_result.passed
     unit_test_output = test_result.output if test_result.output else test_result.error
 
@@ -97,7 +129,7 @@ def run_negotiation(scenario: Scenario, dev_model: str, admin_model: str) -> Neg
         total_admin_tokens=sum(t.admin_token_count for t in turns),
         total_input_tokens=total_input_tokens,
         total_output_tokens=total_output_tokens,
-        total_tokens=total_output_tokens,
+        total_tokens=total_input_tokens + total_output_tokens,
         total_turns=len(turns),
         timed_out=timed_out,
     )

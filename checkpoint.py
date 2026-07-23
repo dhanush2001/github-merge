@@ -170,7 +170,9 @@ class CheckpointManager:
 
 
 def find_latest_checkpoint(results_dir: str) -> Optional[str]:
-    """Return the path of the most recently written checkpoint file, or None."""
-    pattern = os.path.join(results_dir, "checkpoint_*.json")
-    files = sorted(glob.glob(pattern))
-    return files[-1] if files else None
+    """Return the most recently modified checkpoint file, searching subdirectories."""
+    pattern = os.path.join(results_dir, "**", "checkpoint_*.json")
+    files = glob.glob(pattern, recursive=True)
+    if not files:
+        return None
+    return max(files, key=os.path.getmtime)
