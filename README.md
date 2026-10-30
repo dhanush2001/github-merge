@@ -29,11 +29,22 @@ Core flow:
 - Python 3.10+; Python 3.11 is recommended
 - API keys for the providers you actually run
 
-Install dependencies:
+Install dependencies with either a Python venv or a conda environment.
+
+Using venv:
 
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
+pip install --upgrade pip
+pip install -r requirements.txt
+```
+
+Using conda:
+
+```bash
+conda create -n github-merge python=3.11 -y
+conda activate github-merge
 pip install --upgrade pip
 pip install -r requirements.txt
 ```
