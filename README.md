@@ -12,8 +12,6 @@ The main question is whether an Administrator model can screen flawed commits ev
 ## Entry Points
 
 - `run_eval.py`: main evaluation runner
-- `analyze_results.py`: full-pairing-grid analysis (Experiment 1) — plots + text summary
-- `analyze_interlocutor.py`: role-isolation analysis against a fixed anchor (Experiment 2)
 - `evaluation/metrics.py`: aggregate metrics
 
 Core flow:
