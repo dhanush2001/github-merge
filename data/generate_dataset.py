@@ -13,7 +13,7 @@ load_dotenv(find_dotenv())
 # CONFIGS
 GENERATOR_MODEL = "openrouter/openai/gpt-4o"
 REFEREE_MODEL = "openrouter/openai/gpt-4o"
-TARGET_COUNT_PER_TRAP = 100
+TARGET_COUNT_PER_TRAP = 200
 BATCH_SIZE = 1
 TIMEOUT_SECONDS = 90
 MAX_API_RETRIES = 5
