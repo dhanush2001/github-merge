@@ -113,6 +113,12 @@ class ScenarioResult(BaseModel):
     unit_test_passed: bool
     unit_test_output: str
     dev_code_survival_rate: float
+    # APPROVE with the merged code identical to the developer's commit (see
+    # pipeline.code_runner.is_unmodified_merge). None in runs before Oct 2026.
+    unconditional_approval: Optional[bool] = None
+    # Kept so a flawed commit's merged code can later be checked against its
+    # flaw witness (did the flaw actually ship?).
+    final_merged_code: Optional[str] = None
     judge_score: Optional[JudgeScore] = None
     is_correct_decision: Optional[bool] = None
     dataset_label: str = ""

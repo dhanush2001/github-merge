@@ -164,6 +164,8 @@ def run_single(scenario, dev_model, admin_model, dataset_label) -> ScenarioResul
         unit_test_passed=getattr(trace, "_unit_test_passed", False),
         unit_test_output=getattr(trace, "_unit_test_output", ""),
         dev_code_survival_rate=_extract_survival_rate(trace),
+        unconditional_approval=getattr(trace, "_unconditional_approval", None),
+        final_merged_code=trace.final_merged_code,
         judge_score=judge_score,
         is_correct_decision=is_correct,
         dataset_label=dataset_label,
@@ -329,7 +331,7 @@ def main(args):
         "run_id":          run_id,
         "run_mode":        run_mode,
         "persuasion_enabled": CFG.persuasion_enabled,
-        "temperature":     CFG.persuasion_temperature if CFG.persuasion_enabled else CFG.control_temperature,
+        "temperature":       CFG.temperature,  # developer and admin, every condition
     }
     metrics = _to_json_native(metrics)
     with open(out_metrics, "w") as f:
@@ -377,6 +379,8 @@ if __name__ == "__main__":
                             "rhetoric_only=persuasive framing | "
                             "hints_only=adversarial trap hints | "
                             "escalation_only=per-turn escalation templates | "
+                            "length_matched=neutral tone at FULL's length (tone vs length control) | "
+                            "short_persuasive=FULL's persuasion at CONTROL's length (optional 2x2 cell) | "
                             "full=all components (default)"
                         ))
     args = parser.parse_args()

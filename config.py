@@ -32,6 +32,8 @@ class PersuasionMode(str, Enum):
     HINTS_ONLY       = "hints_only"        # neutral base + adversarial trap hints only
     ESCALATION_ONLY  = "escalation_only"   # neutral base + per-turn escalation templates only
     FULL             = "full"              # persuasive framing + trap hints + escalation
+    LENGTH_MATCHED   = "length_matched"    # neutral tone, but as long and detailed as FULL
+    SHORT_PERSUASIVE = "short_persuasive"  # FULL's persuasion, capped at CONTROL's length (optional 2x2 cell)
 
 @dataclass
 class ModelConfig:
@@ -100,9 +102,46 @@ MODELS = {
         "AZURE_GPT_5_2_API_VERSION",
         reasoning_effort="low",
     ),
-    
 
+    # --- Experiment 1 model roster (earlier five-model cohort) ---
+    "gemma-4-31b": ModelConfig(
+        "openrouter/google/gemma-4-31B-it",
+        "openrouter",
+        "OPENROUTER_API_KEY",
+    ),
+    "qwen3-32b": ModelConfig(
+        "openrouter/qwen/qwen3-32b",
+        "openrouter",
+        "OPENROUTER_API_KEY",
+    ),
+    "deepseek-v3.2": ModelConfig(
+        "openrouter/deepseek/deepseek-v3.2",
+        "openrouter",
+        "OPENROUTER_API_KEY",
+    ),
+    "gpt-4.1-mini": ModelConfig(
+        "openrouter/openai/gpt-4.1-mini",
+        "openrouter",
+        "OPENROUTER_API_KEY",
+    ),
+
+    # --- Experiment 2 second anchor (reviewers: one GPT-5.1 anchor limits generality) ---
+    # Low reasoning, like the GPT-5.1 anchor, so the two anchors differ in family, not effort.
+    "deepseek-v4-flash": ModelConfig(
+        "openrouter/deepseek/deepseek-v4-flash",
+        "openrouter",
+        "OPENROUTER_API_KEY",
+        reasoning_effort="low",
+    ),
 }
+
+# Fixed interlocutors in Experiment 2: each candidate is run against every anchor,
+# once as developer (anchor screens) and once as admin (anchor argues).
+EXP2_ANCHORS = ["gpt-5.1", "deepseek-v4-flash"]
+EXP2_CANDIDATES = [
+    "gpt-5-mini", "gpt-5.2", "gpt-5.4", "llama-3.3-70b", "llama-4-maverick",
+    "llama-4-scout", "qwen3.6-flash", "qwen3.7-max", "qwen3.7-plus",
+]
 
 @dataclass
 class DatasetEntry:
@@ -126,8 +165,21 @@ class PipelineConfig:
     admin_models: List[str] = field(default_factory=lambda: list(MODELS.keys()))
     max_turns: int          = 10
     judge_model: str        = "gpt-5.1"
-    persuasion_temperature: float = 0.35
-    control_temperature: float = 0.1
+    # One sampling temperature for BOTH agents in EVERY condition. The May/July
+    # runs used 0.1 in control and 0.35 under persuasion (developer and admin),
+    # so part of the persuasion effect could have been sampling randomness.
+    # Conditions now differ only in the developer's prompt.
+    # (GPT-5 models ignore this: completion_temperature forces 1.0.)
+    temperature: float = 0.35
+    # LENGTH_MATCHED word targets: median developer message length under FULL
+    # in the May/July runs (201 words on turn 1, ~175 after; CONTROL was ~60),
+    # so FULL vs LENGTH_MATCHED differs in tone, not length.
+    length_matched_words_first: int = 200
+    length_matched_words_followup: int = 175
+    # SHORT_PERSUASIVE word cap: median CONTROL developer message length in the
+    # same runs (~60 words), completing the tone x length 2x2 with
+    # CONTROL / LENGTH_MATCHED / FULL. Optional: run only if budget allows.
+    short_persuasive_max_words: int = 60
     seed: int               = 42
     results_dir: str        = "results"
     persuasion_mode: PersuasionMode = PersuasionMode.FULL
@@ -135,7 +187,7 @@ class PipelineConfig:
 
     @property
     def persuasion_enabled(self) -> bool:
-        return self.persuasion_mode != PersuasionMode.CONTROL
+        return self.persuasion_mode not in (PersuasionMode.CONTROL, PersuasionMode.LENGTH_MATCHED)
 
     datasets: List[DatasetEntry] = field(default_factory=_default_datasets)
 

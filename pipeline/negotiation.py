@@ -7,6 +7,7 @@ from pipeline.code_runner import (
     TestStatus,
     compute_code_survival_rate,
     count_assertions,
+    is_unmodified_merge,
     run_unit_tests,
 )
 from config import CFG
@@ -137,6 +138,10 @@ def run_negotiation(scenario: Scenario, dev_model: str, admin_model: str) -> Neg
     trace._unit_test_output = unit_test_output
     trace._survival_rate = survival_result.survival_rate
     trace._survival_result = survival_result
+    trace._unconditional_approval = (
+        decision == AdminDecision.APPROVE
+        and is_unmodified_merge(scenario.developer_commit, final_merged_code)
+    )
     trace._assertions_passed = test_result.assertions_passed
     trace._assertions_total = test_result.assertions_total
 

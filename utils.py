@@ -59,6 +59,8 @@ def provider_kwargs(model_cfg) -> Dict[str, object]:
     effort = getattr(model_cfg, "reasoning_effort", None)
     if effort and "gpt-5" in getattr(model_cfg, "name", "").lower():
         kwargs["reasoning_effort"] = effort
+    elif effort and provider == "openrouter":
+        kwargs["extra_body"] = {"reasoning": {"effort": effort}}
     return kwargs
 
 

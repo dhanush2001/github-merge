@@ -202,6 +202,23 @@ def compute_code_survival_rate(dev_commit: str, merged_code: str | None) -> Surv
     return SurvivalResult(round(matched / len(dev_lines), 4), matched, len(dev_lines), True)
 
 
+def is_unmodified_merge(dev_commit: str, merged_code: str | None) -> bool:
+    """True when the merged code IS the developer's commit (ignoring indentation-free
+    whitespace and blank lines): the admin approved without changing anything.
+
+    Replaces the old ">= 70% of developer lines survive" threshold (reviewer W10):
+    an all-or-nothing definition needs no arbitrary cut-off, and unlike line
+    survival it does not count a merge where the admin kept every line but
+    added a fix."""
+    if not merged_code:
+        return False
+
+    def normalize(code: str) -> list[str]:
+        return [l.strip() for l in code.splitlines() if l.strip()]
+
+    return normalize(merged_code) == normalize(dev_commit)
+
+
 def detect_hallucinated_imports(code: str) -> tuple[list[str], list[str]]:
     import sys, pkgutil
     stdlib_modules = set(m.name for m in pkgutil.iter_modules()) | set(sys.stdlib_module_names)

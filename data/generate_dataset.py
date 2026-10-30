@@ -44,6 +44,40 @@ CATEGORIES = {
     ]
 }
 
+CATEGORY_SHORT = {"Security_Trap": "SEC", "Redundancy_Trap": "RED", "Objective_Trap": "OBJ"}
+
+
+def strip_added_comments(code, base_code):
+  """Drop comments the commit adds that are not in the base code.
+
+  The generator sometimes annotates the flaw (e.g. "# This line is the trap"),
+  which hands the reviewer the answer. Uses tokenize so '#' inside strings is
+  left alone; the stripped code must parse to the same AST.
+  """
+  import io, tokenize
+  base_comments = {m.strip() for m in re.findall(r"#[^\n]*", base_code)}
+  try:
+    tokens = list(tokenize.generate_tokens(io.StringIO(code).readline))
+  except (tokenize.TokenError, IndentationError, SyntaxError):
+    return code
+  lines = code.split("\n")
+  drop = set()
+  for tok in reversed(tokens):
+    if tok.type != tokenize.COMMENT or tok.string.strip() in base_comments:
+      continue
+    row, col = tok.start[0] - 1, tok.start[1]
+    lines[row] = lines[row][:col].rstrip()
+    if not lines[row].strip():
+      drop.add(row)
+  new = "\n".join(l for i, l in enumerate(lines) if i not in drop)
+  try:
+    if ast.dump(ast.parse(code)) != ast.dump(ast.parse(new)):
+      return code
+  except SyntaxError:
+    return code
+  return new
+
+
 # Highly specific real-world tasks instead of broad domains
 SPECIFIC_TASKS = [
     "Refactoring an authentication token validator",
@@ -356,7 +390,12 @@ def main():
             
             #consecutive_failures = 0
             unique_timestamp = int(time.time()*1000)
-            base_id = paired_scenario["scenario_id_base"]
+            # Number scenarios ourselves: the model's "scenario_id_base" reuses
+            # numbers (e.g. PR_B_RED_0001 appeared 64 times in V2).
+            base_id = f"PR_B_{CATEGORY_SHORT[category]}_{current_count + 1:04d}"
+            base_code = paired_scenario["base_code"]
+            for k in ("developer_commit_trap", "developer_commit_control"):
+              paired_scenario[k] = strip_added_comments(paired_scenario[k], base_code)
             
             trap_scenario = {
                 "scenario_id": f"{base_id}_TRAP_{unique_timestamp}",
