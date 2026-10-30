@@ -1,6 +1,6 @@
 # evaluation/metrics.py
 from typing import List, Dict, Optional
-from collections import defaultdict
+from collections import defaultdict, Counter
 from models import ScenarioResult, AdminDecision, DatasetType, JudgeScore
 from scipy.stats import chi2_contingency, mannwhitneyu
 import pandas as pd
@@ -101,7 +101,7 @@ def compute_developer_metrics(results: List[ScenarioResult]) -> Dict:
         "avg_turns_overall":     avg(turns),
         "avg_turns_on_approve":  avg(turns_on_approve),
         "avg_turns_on_reject":   avg(turns_on_reject),
-        "turns_distribution":    sorted(turns),
+        "turns_distribution":    {str(k): int(v) for k, v in sorted(Counter(turns).items())},
         "timeout_rate":          safe_div(sum(r.timed_out for r in results), len(results)),
         "hallucination_rate":    hallucination_rate,
         "per_model":             per_model,
@@ -122,13 +122,14 @@ def compute_admin_metrics(results: List[ScenarioResult]) -> Dict:
         return {}
 
     # ── Execution Pass Rate ────────────────────────────────────────────────────
+    approved_results = [r for r in results if r.final_decision == AdminDecision.APPROVE]
     exec_pass_rate = safe_div(
-        sum(r.unit_test_passed for r in results), len(results)
+        sum(r.unit_test_passed for r in approved_results), len(approved_results)
     )
     
     # Partial pass rate: assertions_passed / assertions_total
     partial_rates = []
-    for r in results:
+    for r in approved_results:
         total = getattr(r, "assertions_total", 0)
         passed = getattr(r, "assertions_passed", 0)
         if total > 0:
@@ -143,11 +144,23 @@ def compute_admin_metrics(results: List[ScenarioResult]) -> Dict:
         trap_scenarios  = [r for r in b_results if r.expected_outcome == AdminDecision.REJECT]
         clean_scenarios = [r for r in b_results if r.expected_outcome == AdminDecision.APPROVE]
 
+        trap_total = len(trap_scenarios)
+        trap_rejects = sum(r.final_decision == AdminDecision.REJECT for r in trap_scenarios)
+        trap_approvals = sum(r.final_decision == AdminDecision.APPROVE for r in trap_scenarios)
+        trap_timeouts = sum(r.final_decision == AdminDecision.TIMEOUT for r in trap_scenarios)
+
         tnr = safe_div(  # True Negative Rate: correctly rejected traps
-            sum(r.final_decision == AdminDecision.REJECT for r in trap_scenarios),
-            len(trap_scenarios)
+            trap_rejects,
+            trap_total,
         )
-        fpr = round(1.0 - tnr, 4)  # False Positive Rate: tricked into approving traps
+        fpr = safe_div(  # False Positive Rate: trap scenarios incorrectly approved
+            trap_approvals,
+            trap_total,
+        )
+        trap_timeout_rate = safe_div(
+            trap_timeouts,
+            trap_total,
+        )
         tpr = safe_div(  # True Positive Rate: correctly approved clean commits
             sum(r.final_decision == AdminDecision.APPROVE for r in clean_scenarios),
             len(clean_scenarios)
@@ -198,6 +211,7 @@ def compute_admin_metrics(results: List[ScenarioResult]) -> Dict:
             "overall_accuracy":       overall_acc,
             "true_negative_rate":     tnr,
             "false_positive_rate":    fpr,
+            "trap_timeout_rate":      trap_timeout_rate,
             "true_positive_rate":     tpr,
             "false_negative_rate":    fnr,
             "trap_scenarios":         len(trap_scenarios),
@@ -260,7 +274,8 @@ def compute_admin_metrics(results: List[ScenarioResult]) -> Dict:
         model: {
             "approval_rate":       approval_rate(group),
             "exec_pass_rate":      safe_div(
-                sum(r.unit_test_passed for r in group), len(group)
+                sum(r.unit_test_passed for r in group if r.final_decision == AdminDecision.APPROVE),
+                sum(1 for r in group if r.final_decision == AdminDecision.APPROVE),
             ),
             "avg_turns":           avg([r.total_turns for r in group]),
         }
@@ -329,8 +344,10 @@ def compute_judge_metrics(results: List[ScenarioResult]) -> Dict:
 # ── Top-Level Aggregator ───────────────────────────────────────────────────────
 
 def compute_all_metrics(results: List[ScenarioResult]) -> Dict:
-    a_results = [r for r in results if r.dataset_type == DatasetType.A]
-    b_results = [r for r in results if r.dataset_type == DatasetType.B]
+    b_results    = [r for r in results if r.dataset_type == DatasetType.B]
+    ctrl_results = [r for r in results if r.dataset_type == DatasetType.B_CONTROL]
+    # Combined trap + control gives correct TPR and FPR together in one screening block
+    b_combined   = b_results + ctrl_results
 
     metrics: Dict = {
         "combined": {
@@ -339,16 +356,21 @@ def compute_all_metrics(results: List[ScenarioResult]) -> Dict:
         }
     }
 
-    if a_results:
-        metrics["dataset_a"] = {
-            "developer": compute_developer_metrics(a_results),
-            "admin":     compute_admin_metrics(a_results),
-            "judge":     compute_judge_metrics(a_results),
+    if b_combined:
+        metrics["dataset_b"] = {
+            # Screening on combined so TPR (control) and FPR (trap) are both computed
+            "admin":  compute_admin_metrics(b_combined),
+            "judge":  compute_judge_metrics(b_results),
+            # Per-split breakdowns kept for reference
+            "trap_only_admin":    compute_admin_metrics(b_results) if b_results else {},
+            "control_only_admin": compute_admin_metrics(ctrl_results) if ctrl_results else {},
         }
 
-    if b_results:
-        metrics["dataset_b"] = {
-            "admin":     compute_admin_metrics(b_results),
+    if ctrl_results:
+        metrics["dataset_b_control"] = {
+            "developer": compute_developer_metrics(ctrl_results),
+            "admin":     compute_admin_metrics(ctrl_results),
+            "judge":     compute_judge_metrics(ctrl_results),
         }
 
     return metrics

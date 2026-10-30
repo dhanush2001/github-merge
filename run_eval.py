@@ -1,13 +1,58 @@
-import json, os, argparse
+import json, os, argparse, time
 from datetime import datetime
 from itertools import product
-from models import Scenario, ScenarioResult, AdminDecision, DatasetType
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import threading
+from models import Scenario, ScenarioResult, AdminDecision
 from pipeline.negotiation import run_negotiation
 from pipeline.judge import judge_interaction
 from pipeline.code_runner import detect_hallucinated_imports
 from evaluation.metrics import compute_all_metrics, results_to_dataframe
-from config import CFG, MODELS
-import pandas as pd
+from config import (
+    CFG,
+    PersuasionMode,
+    format_runtime_config,
+    validate_runtime_config,
+)
+from checkpoint import CheckpointManager, TokenLimitReached, RateLimitReached, find_latest_checkpoint
+import litellm
+
+_print_lock = threading.Lock()
+
+MAX_RETRIES = 3
+_RETRY_BACKOFF = [60, 120, 180]
+
+_RETRYABLE_ERRORS = (
+    TokenLimitReached,
+    RateLimitReached,
+    litellm.exceptions.RateLimitError,
+)
+
+_MAJOR_ERRORS = (
+    litellm.exceptions.AuthenticationError,
+    litellm.exceptions.NotFoundError,
+    litellm.exceptions.BadRequestError,
+    litellm.exceptions.APIConnectionError,
+    litellm.exceptions.APIError,
+)
+
+
+def _to_json_native(value):
+    """Recursively convert numpy/pandas scalars to JSON-native Python types."""
+    if isinstance(value, dict):
+        return {k: _to_json_native(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_to_json_native(v) for v in value]
+    if isinstance(value, tuple):
+        return [_to_json_native(v) for v in value]
+
+    item = getattr(value, "item", None)
+    if callable(item):
+        try:
+            return item()
+        except Exception:
+            return value
+    return value
 
 
 def _extract_survival_rate(trace) -> float:
@@ -21,9 +66,6 @@ def _extract_survival_rate(trace) -> float:
 def load_all_scenarios():
     all_scenarios = []
     enabled_entries = [entry for entry in CFG.datasets if entry.enabled]
-    if len(enabled_entries) > 1:
-        print(f"  [WARN] Multiple datasets enabled; using only: {enabled_entries[0].label}")
-        enabled_entries = enabled_entries[:1]
 
     for entry in enabled_entries:
         if not entry.enabled:
@@ -37,17 +79,63 @@ def load_all_scenarios():
         for s in scenarios:
             s.__dict__["_source_label"] = entry.label
         all_scenarios.extend((s, entry.label) for s in scenarios)
-        print(f"  Loaded {len(scenarios):>3} scenarios [{entry.label}]")
     return all_scenarios
+
+
+def apply_cli_overrides(args) -> None:
+    if args.datasets:
+        requested_labels = set(args.datasets)
+        known_labels = {entry.label for entry in CFG.datasets}
+        unknown_labels = sorted(requested_labels - known_labels)
+        if unknown_labels:
+            print(f"  [WARN] Unknown dataset label(s): {', '.join(unknown_labels)}")
+            print(f"  [INFO] Available labels: {', '.join(sorted(known_labels))}")
+        for entry in CFG.datasets:
+            entry.enabled = entry.label in requested_labels
+
+    if args.dev_models:
+        CFG.dev_models = args.dev_models
+    if args.admin_models:
+        CFG.admin_models = args.admin_models
+
+
+def _run_dir(run_id: str) -> str:
+    """Return a descriptive subdirectory: results/<mode>_<run_id>/"""
+    mode = CFG.persuasion_mode.value
+    path = os.path.join(CFG.results_dir, f"{mode}_{run_id}")
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
+def init_checkpoint(args):
+    if not getattr(args, "resume", None):
+        run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+        run_dir = _run_dir(run_id)
+        return run_id, run_dir, CheckpointManager(run_dir, run_id)
+
+    resume_path = args.resume
+    if resume_path == "auto":
+        resume_path = find_latest_checkpoint(CFG.results_dir)
+        if not resume_path:
+            print("[ERROR] No checkpoint files found in results/. Starting fresh.")
+
+    if not resume_path:
+        run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+        run_dir = _run_dir(run_id)
+        return run_id, run_dir, CheckpointManager(run_dir, run_id)
+
+    ckpt = CheckpointManager.from_file(resume_path)
+    run_dir = os.path.dirname(ckpt.path)
+    print(f"[INFO] Resuming checkpoint: {resume_path} (run_id={ckpt.run_id})")
+    print(f"[INFO] Checkpoint status: {ckpt.summary()}")
+    return ckpt.run_id, run_dir, ckpt
 
 
 def run_single(scenario, dev_model, admin_model, dataset_label) -> ScenarioResult:
     trace = run_negotiation(scenario, dev_model, admin_model)
     hallucinated, _ = detect_hallucinated_imports(scenario.developer_commit)
 
-    judge_score = None
-    if scenario.dataset_type == DatasetType.A:
-        judge_score = judge_interaction(scenario, trace)
+    judge_score = judge_interaction(scenario, trace)
 
     is_correct = None
     if scenario.expected_outcome:
@@ -64,17 +152,24 @@ def run_single(scenario, dev_model, admin_model, dataset_label) -> ScenarioResul
         expected_outcome=scenario.expected_outcome,
         total_turns=trace.total_turns,
         total_dev_chars=trace.total_dev_chars,
-        total_dev_tokens=getattr(trace, "total_dev_tokens", 0),
-        total_admin_chars=getattr(trace, "total_admin_chars", 0),
-        total_admin_tokens=getattr(trace, "total_admin_tokens", 0),
-        total_tokens=getattr(trace, "total_tokens", 0),
+        total_dev_input_tokens=trace.total_dev_input_tokens,
+        total_dev_tokens=trace.total_dev_tokens,
+        total_admin_chars=trace.total_admin_chars,
+        total_admin_input_tokens=trace.total_admin_input_tokens,
+        total_admin_tokens=trace.total_admin_tokens,
+        total_input_tokens=trace.total_input_tokens,
+        total_output_tokens=trace.total_output_tokens,
+        total_tokens=trace.total_tokens,
         timed_out=trace.timed_out,
         unit_test_passed=getattr(trace, "_unit_test_passed", False),
         unit_test_output=getattr(trace, "_unit_test_output", ""),
         dev_code_survival_rate=_extract_survival_rate(trace),
+        unconditional_approval=getattr(trace, "_unconditional_approval", None),
+        final_merged_code=trace.final_merged_code,
         judge_score=judge_score,
         is_correct_decision=is_correct,
         dataset_label=dataset_label,
+        persuasion_mode=CFG.persuasion_mode.value,
         turns=trace.turns,
     )
     result.__dict__["hallucinated_imports"] = hallucinated
@@ -85,36 +180,114 @@ def run_single(scenario, dev_model, admin_model, dataset_label) -> ScenarioResul
 
 def main(args):
     os.makedirs(CFG.results_dir, exist_ok=True)
-    run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+    run_mode = CFG.persuasion_mode.value
+    try:
+        apply_cli_overrides(args)
+        validate_runtime_config(CFG.dev_models, CFG.admin_models, CFG.judge_model)
+    except ValueError as e:
+        print(f"\n[ERROR] {e}")
+        return
 
-    if args.datasets:
-        if len(args.datasets) > 1:
-            print(f"  [WARN] Multiple --datasets values provided; using only: {args.datasets[0]}")
-            args.datasets = args.datasets[:1]
-        for entry in CFG.datasets:
-            entry.enabled = entry.label in args.datasets
-    if args.dev_models:
-        CFG.dev_models = args.dev_models
-    if args.admin_models:
-        CFG.admin_models = args.admin_models
+    run_id, run_dir, ckpt = init_checkpoint(args)
 
     all_scenarios = load_all_scenarios()
+    if not all_scenarios:
+        print("\n[ERROR] No scenarios loaded. Check --datasets labels or data/*.json files.")
+        return
     pairings = list(product(CFG.dev_models, CFG.admin_models))
     if args.cross_only:
         pairings = [(d, a) for d, a in pairings if d != a]
+    if not pairings:
+        print("\n[ERROR] No model pairings selected. Check --cross-only and model filters.")
+        return
 
+    all_tasks = [
+        (scenario, label, dev_model, admin_model)
+        for dev_model, admin_model in pairings
+        for scenario, label in all_scenarios
+    ]
+    total = len(all_tasks)
+    completed = 0
+    print(f"\n  Running {total} tasks across {len(pairings)} model pairing(s) "
+          f"with {CFG.max_workers} workers...")
+
+    # Seed results from checkpoint so metrics cover the full run, not just new tasks
     all_results = []
-    conversation_logs = []
-    for dev_model, admin_model in pairings:
-        print(f"\n  Dev: {dev_model}  |  Admin: {admin_model}")
-        for scenario, label in all_scenarios:
-            print(f"  [{scenario.scenario_id}]", end=" ")
+    for r in ckpt.all_completed_results():
+        try:
+            all_results.append(ScenarioResult(**r))
+        except Exception:
+            pass
+    print(f"  Loaded {len(all_results)} completed results from checkpoint.")
+
+    conversation_logs = [
+        {
+            "scenario_id": r.scenario_id,
+            "run_mode": run_mode,
+            "persuasion_mode": r.persuasion_mode,
+            "dataset_label": r.dataset_label,
+            "dataset_type": str(r.dataset_type),
+            "category": r.category,
+            "dev_model": r.dev_model,
+            "admin_model": r.admin_model,
+            "final_decision": str(r.final_decision),
+            "total_turns": r.total_turns,
+            "turns": [t.model_dump() for t in r.turns],
+        }
+        for r in all_results
+    ]
+
+    def _run_task(task):
+        scenario, label, dev_model, admin_model = task
+        if ckpt.is_completed(scenario.scenario_id, dev_model, admin_model):
+            return None  # already done in a previous run
+
+        last_err = None
+        for attempt in range(MAX_RETRIES):
             try:
-                result = run_single(scenario, dev_model, admin_model, label)
+                return run_single(scenario, dev_model, admin_model, label)
+            except _RETRYABLE_ERRORS as e:
+                last_err = e
+                wait = _RETRY_BACKOFF[min(attempt, len(_RETRY_BACKOFF) - 1)]
+                with _print_lock:
+                    print(f"  [RETRY {attempt + 1}/{MAX_RETRIES}] {scenario.scenario_id} "
+                          f"dev={dev_model} admin={admin_model} — {type(e).__name__}, "
+                          f"waiting {wait}s...")
+                time.sleep(wait)
+
+        # All retries exhausted — raise so the caller skips without checkpointing
+        raise last_err
+
+    with ThreadPoolExecutor(max_workers=CFG.max_workers) as executor:
+        future_to_task = {executor.submit(_run_task, task): task for task in all_tasks}
+        for future in as_completed(future_to_task):
+            scenario, label, dev_model, admin_model = future_to_task[future]
+            try:
+                result = future.result()
+                if result is None:
+                    # Skipped — already completed in prior run
+                    with _print_lock:
+                        completed += 1
+                    continue
+                status = "✓" if result.final_decision == AdminDecision.APPROVE else "✗"
+                with _print_lock:
+                    completed += 1
+                    print(
+                        f"  [{completed}/{total}] {status} {result.scenario_id} "
+                        f"dev={dev_model} admin={admin_model} "
+                        f"Turns:{result.total_turns} Tokens:{result.total_tokens} "
+                        f"Tests:{result.unit_test_passed}"
+                    )
+                ckpt.mark_completed(
+                    scenario.scenario_id, dev_model, admin_model,
+                    result.model_dump(mode="json"),
+                )
                 all_results.append(result)
                 conversation_logs.append(
                     {
                         "scenario_id": result.scenario_id,
+                        "run_mode": run_mode,
+                        "persuasion_mode": result.persuasion_mode,
                         "dataset_label": result.dataset_label,
                         "dataset_type": str(result.dataset_type),
                         "category": result.category,
@@ -125,25 +298,26 @@ def main(args):
                         "turns": [t.model_dump() for t in result.turns],
                     }
                 )
-                status = "✓" if result.final_decision == AdminDecision.APPROVE else "✗"
-                print(
-                    f"{status} Turns:{result.total_turns} "
-                    f"Tokens:{result.total_tokens} Tests:{result.unit_test_passed}"
-                )
+            except (*_RETRYABLE_ERRORS, *_MAJOR_ERRORS) as e:
+                # Rate/token limit (retries exhausted) or major API error — never checkpoint
+                with _print_lock:
+                    completed += 1
+                    print(f"  [{completed}/{total}] SKIPPED (not checkpointed) "
+                          f"{scenario.scenario_id} dev={dev_model} admin={admin_model}: "
+                          f"{type(e).__name__}: {e}")
             except Exception as e:
-                print(f"ERROR: {e}")
+                # Unexpected error — checkpoint so it's visible but doesn't block the run
+                with _print_lock:
+                    completed += 1
+                    print(f"  [{completed}/{total}] ERROR {scenario.scenario_id} "
+                          f"dev={dev_model} admin={admin_model}: {e}")
+                ckpt.mark_error(scenario.scenario_id, dev_model, admin_model, str(e))
 
-    out_json = f"{CFG.results_dir}/results_{run_id}.json"
-    out_csv  = f"{CFG.results_dir}/results_{run_id}.csv"
-    out_conversation_json = f"{CFG.results_dir}/conversation_logs_{run_id}.json"
-    
-    # Verify results directory exists before writing
-    if not os.path.exists(CFG.results_dir):
-        print(f"[ERROR] Results directory does not exist: {CFG.results_dir}")
-        print(f"[ERROR] Current working directory: {os.getcwd()}")
-        os.makedirs(CFG.results_dir, exist_ok=True)
-        print(f"[INFO] Created directory: {CFG.results_dir}")
-    
+    out_json              = os.path.join(run_dir, "results.json")
+    out_csv               = os.path.join(run_dir, "results.csv")
+    out_conversation_json = os.path.join(run_dir, "conversation_logs.json")
+    out_metrics           = os.path.join(run_dir, "metrics.json")
+
     with open(out_json, "w") as f:
         json.dump([r.model_dump(exclude={"turns"}) for r in all_results], f, indent=2, default=str)
 
@@ -153,17 +327,69 @@ def main(args):
     results_to_dataframe(all_results).to_csv(out_csv, index=False)
 
     metrics = compute_all_metrics(all_results)
-    with open(f"{CFG.results_dir}/metrics_{run_id}.json", "w") as f:
+    metrics["run_meta"] = {
+        "run_id":          run_id,
+        "run_mode":        run_mode,
+        "persuasion_enabled": CFG.persuasion_enabled,
+        "temperature":       CFG.temperature,  # developer and admin, every condition
+    }
+    metrics = _to_json_native(metrics)
+    with open(out_metrics, "w") as f:
         json.dump(metrics, f, indent=2)
 
-    print(f"\nDone. Results: {out_json}")
-    print(f"Conversation logs: {out_conversation_json}")
+    from utils import get_parse_stats
+    stats = get_parse_stats()
+    if stats:
+        totals = {}
+        for k, v in stats.items():
+            model, _, status = k.rpartition(":")
+            entry = totals.setdefault(model, {"ok": 0, "fail": 0})
+            entry[status] = v
+        print("\n[INFO] Admin JSON parse rates:")
+        for model, entry in sorted(totals.items()):
+            total = entry["ok"] + entry["fail"]
+            rate = (entry["fail"] / total * 100) if total else 0.0
+            print(f"  {model:50s} fail={entry['fail']:5d} / {total:5d} ({rate:5.1f}%)")
+        parse_stats_path = os.path.join(run_dir, "parse_stats.json")
+        with open(parse_stats_path, "w") as f:
+            json.dump(totals, f, indent=2)
+
+    print(f"\nDone. Output directory: {run_dir}/")
 
 
 if __name__ == "__main__":
+    valid_modes = [m.value for m in PersuasionMode]
     parser = argparse.ArgumentParser()
-    parser.add_argument("--cross-only",    action="store_true")
-    parser.add_argument("--datasets",      nargs="+", default=None)
-    parser.add_argument("--dev-models",    nargs="+", default=None)
-    parser.add_argument("--admin-models",  nargs="+", default=None)
-    main(parser.parse_args())
+    parser.add_argument("--datasets",        nargs="+", default=None)
+    parser.add_argument("--cross-only",      action="store_true",
+                        help="Skip same-model pairings (dev==admin).")
+    parser.add_argument("--dev-models",      nargs="+", default=None,
+                        help="Developer model key(s), e.g. --dev-models gpt-5.4 (default: all models)")
+    parser.add_argument("--admin-models",    nargs="+", default=None,
+                        help="Admin model key(s), e.g. --admin-models gpt-5-mini gpt-5.1 gpt-5.4 (default: all models)")
+    parser.add_argument("--workers",         type=int, default=None,
+                        help="Number of parallel workers")
+    parser.add_argument("--resume",          nargs="?", const="auto", default=None,
+                        metavar="CHECKPOINT_PATH",
+                        help="Resume from a checkpoint. Omit path to auto-pick the latest.")
+    parser.add_argument("--persuasion-mode", default=None, choices=valid_modes,
+                        help=(
+                            "Ablation condition for developer agent persuasion. "
+                            "control=neutral facts only | "
+                            "rhetoric_only=persuasive framing | "
+                            "hints_only=adversarial trap hints | "
+                            "escalation_only=per-turn escalation templates | "
+                            "length_matched=neutral tone at FULL's length (tone vs length control) | "
+                            "short_persuasive=FULL's persuasion at CONTROL's length (optional 2x2 cell) | "
+                            "full=all components (default)"
+                        ))
+    args = parser.parse_args()
+
+    if args.persuasion_mode:
+        CFG.persuasion_mode = PersuasionMode(args.persuasion_mode)
+
+    if args.workers:
+        CFG.max_workers = args.workers
+
+    print(f"\n[INFO] Persuasion mode: {CFG.persuasion_mode.value}\n")
+    main(args)

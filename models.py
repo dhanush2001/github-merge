@@ -3,8 +3,8 @@ from typing import Optional, List
 from enum import Enum
 
 class DatasetType(str, Enum):
-    A = "Dataset_A_Zero_Sum"
     B = "Dataset_B_Traps"
+    B_CONTROL = "Dataset_B_Control"
 
 class AdminDecision(str, Enum):
     APPROVE = "APPROVE"
@@ -18,10 +18,24 @@ class Scenario(BaseModel):
     category: str
     base_code: str
     developer_commit: str
-    system_prompt: str
-    administrator_prompt: Optional[str] = None
     expected_outcome: Optional[AdminDecision] = None
     unit_tests: str
+
+    @field_validator("dataset_type", mode="before")
+    @classmethod
+    def normalize_dataset_type(cls, value):
+        if isinstance(value, DatasetType):
+            return value
+        if isinstance(value, str):
+            normalized = value.strip()
+            aliases = {
+                "Dataset_B_Traps_V2": DatasetType.B,
+                "Dataset_B_Control_V2": DatasetType.B_CONTROL,
+            }
+            if normalized in aliases:
+                return aliases[normalized]
+            return normalized
+        return value
 
     @field_validator("expected_outcome", mode="before")
     @classmethod
@@ -41,11 +55,13 @@ class NegotiationTurn(BaseModel):
     turn: int
     dev_argument: str
     dev_char_count: int
-    dev_token_count: int
+    dev_input_token_count: int = 0
+    dev_token_count: int = 0
     admin_decision: AdminDecision
     admin_feedback: str
     admin_char_count: int
-    admin_token_count: int
+    admin_input_token_count: int = 0
+    admin_token_count: int = 0
 
 class NegotiationTrace(BaseModel):
     scenario_id: str
@@ -55,9 +71,13 @@ class NegotiationTrace(BaseModel):
     final_decision: AdminDecision
     final_merged_code: Optional[str] = None
     total_dev_chars: int = 0
+    total_dev_input_tokens: int = 0
     total_dev_tokens: int = 0
     total_admin_chars: int = 0
+    total_admin_input_tokens: int = 0
     total_admin_tokens: int = 0
+    total_input_tokens: int = 0
+    total_output_tokens: int = 0
     total_tokens: int = 0
     total_turns: int = 0
     timed_out: bool = False
@@ -81,15 +101,26 @@ class ScenarioResult(BaseModel):
     expected_outcome: Optional[AdminDecision]
     total_turns: int
     total_dev_chars: int
+    total_dev_input_tokens: int = 0
     total_dev_tokens: int = 0
     total_admin_chars: int = 0
+    total_admin_input_tokens: int = 0
     total_admin_tokens: int = 0
+    total_input_tokens: int = 0
+    total_output_tokens: int = 0
     total_tokens: int = 0
     timed_out: bool
     unit_test_passed: bool
     unit_test_output: str
     dev_code_survival_rate: float
+    # APPROVE with the merged code identical to the developer's commit (see
+    # pipeline.code_runner.is_unmodified_merge). None in runs before Oct 2026.
+    unconditional_approval: Optional[bool] = None
+    # Kept so a flawed commit's merged code can later be checked against its
+    # flaw witness (did the flaw actually ship?).
+    final_merged_code: Optional[str] = None
     judge_score: Optional[JudgeScore] = None
     is_correct_decision: Optional[bool] = None
     dataset_label: str = ""
+    persuasion_mode: str = "full"
     turns: List[NegotiationTurn] = []

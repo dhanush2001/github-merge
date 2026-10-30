@@ -5,5 +5,4 @@ from evaluation.metrics import (
     compute_all_metrics,
     results_to_dataframe,
 )
-from evaluation.dataset_a_eval import run_dataset_a_evaluation
-from evaluation.dataset_b_eval import run_dataset_b_evaluation
+from evaluation.single_dataset_eval import run_evaluation
