@@ -186,28 +186,6 @@ Metric semantics:
 - Execution pass rate is measured only over approved merged code.
 - Rejected and timed-out tasks do not run unit tests against the unmerged developer commit.
 
-## Analyze Results
-
-Analyze the latest result files:
-
-```bash
-python analyze_results.py
-```
-
-Compare full persuasion against a control run:
-
-```bash
-python analyze_results.py \
-  --results-csv results/results_full.csv \
-  --control-results results/results_control.csv
-```
-
-For the Experiment 2 role-isolation analysis (candidate vs. a fixed anchor):
-
-```bash
-python analyze_interlocutor.py
-```
-
 ## Verification
 
 Compile check:
